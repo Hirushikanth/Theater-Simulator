@@ -24,7 +24,7 @@ export class DAMFParser {
       // The format is relatively flat — we parse key fields manually
       // to avoid requiring a full YAML library in the renderer
       const data = this.parseSimpleYAML(yamlText)
-      
+
       if (data.objects) {
         this.parseObjects(data.objects)
       }

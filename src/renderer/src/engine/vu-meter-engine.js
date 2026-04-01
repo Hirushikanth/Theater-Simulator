@@ -10,9 +10,9 @@ export class VUMeterEngine {
     this.audioEngine = audioEngine
     this.vbapRenderer = vbapRenderer
     
-    this.intervalId = null
-    this.onUpdate = null // Callback to pipe data into React
+    this.rafId = null
     this.speakerGains = new Map()
+    this.outputLevels = new Map() // FIX: Reuse map to prevent GC spikes
   }
 
   /**
@@ -27,13 +27,12 @@ export class VUMeterEngine {
    * Start polling the WebAudio analyser nodes at 60 Frames Per Second (16.6ms)
    */
   start() {
-    this.stop() // Prevent double-looping
-
-    this.intervalId = setInterval(() => {
-      if (!this.audioEngine || !this.audioEngine.isPlaying) return
-      
+    this.stop()
+    const loop = () => {
       this.calculateLevels()
-    }, 1000 / 60) // 60Hz explicit tick
+      this.rafId = requestAnimationFrame(loop)
+    }
+    this.rafId = requestAnimationFrame(loop)
   }
 
   /**
@@ -50,43 +49,36 @@ export class VUMeterEngine {
       if (amp > maxBedAmp) maxBedAmp = amp
     }
 
-    // 3. Spatially fold the geometric vectors and real audio amplitude
-    const outputLevels = new Map()
+    // Update existing map instead of creating a new one
     for (const speaker of SPEAKERS) {
       const id = speaker.id
       const baseDb = baseLevels.get(id) ?? -100
-      
-      // Base Decoder Track Energy
       const baseAmp = baseDb > -100 ? Math.pow(10, baseDb / 20) : 0
-      
-      // Dynamic Spatial Object Energy (Driven by geometric proximity * actual sound)
       const spatialGainRatio = this.speakerGains.get(id) || 0
       const spatialAmp = spatialGainRatio * maxBedAmp
       
-      // True Combined Spatial Energy Output
       const totalAmp = baseAmp + spatialAmp
       const totalDb = totalAmp > 0.00001 ? 20 * Math.log10(totalAmp) : -100
       
-      outputLevels.set(id, totalDb)
+      this.outputLevels.set(id, totalDb)
     }
+  }
 
-    // 4. Pipe clean Data back to UI
-    if (this.onUpdate) {
-      this.onUpdate(outputLevels)
-    }
+  /**
+   * Get the current calculated levels
+   */
+  getLevels() {
+    return this.outputLevels
   }
 
   /**
    * Halt the interval instantly
    */
   stop() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId)
-      this.intervalId = null
+    if (this.rafId) {
+      cancelAnimationFrame(this.rafId)
+      this.rafId = null
     }
-    // Flush UI explicitly to 0
-    if (this.onUpdate) {
-      this.onUpdate(new Map())
-    }
+    this.outputLevels.clear()
   }
 }

@@ -1,6 +1,6 @@
 import { ipcMain, dialog } from 'electron'
 import { readFile } from 'fs/promises'
-import { analyzeFile, decodeAudio, extractBitstream } from './ffmpeg-bridge'
+import { analyzeFile, decodeAudio, extractBitstream, cleanupTempDir } from './ffmpeg-bridge'
 import { analyzeTrueHD, decodeTrueHD } from './truehd-bridge'
 
 export function setupIpcHandlers() {
@@ -43,6 +43,11 @@ export function setupIpcHandlers() {
     } catch (err) {
       return { error: err.message }
     }
+  })
+
+  // Cleanup temporary decoding directories
+  ipcMain.handle('audio:cleanupTemp', async (_, dirPath) => {
+    await cleanupTempDir(dirPath)
   })
 
   // Extract raw bitstream for metadata parsing

@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react'
 import { TheaterScene } from '../three/TheaterScene'
 import { SUPPORTED_EXTENSIONS } from '../utils/constants'
 
-export default function TheaterView({ objects, speakerGains, channelLevels, metadataSource, isPlaying, hasFile, onOpenFile }) {
+export default function TheaterView({ objects, speakerGains, vuMeterEngine, metadataSource, isPlaying, hasFile, onOpenFile }) {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
 
@@ -30,13 +30,29 @@ export default function TheaterView({ objects, speakerGains, channelLevels, meta
   // Update speaker glow from VBAP gains or audio levels
   useEffect(() => {
     if (!sceneRef.current) return
-
+    
     if (speakerGains.size > 0 && objects.length > 0) {
       sceneRef.current.updateSpeakerGains(speakerGains)
-    } else if (channelLevels.size > 0) {
-      sceneRef.current.updateSpeakerLevels(channelLevels)
+    } else {
+      // Direct update loop for audio levels in ThreeJS
+      const updateLevels = () => {
+        if (!sceneRef.current || isPlaying === false) return
+        
+        const levels = vuMeterEngine.getLevels()
+        if (levels.size > 0) {
+          sceneRef.current.updateSpeakerLevels(levels)
+        }
+        
+        if (isPlaying) {
+          requestAnimationFrame(updateLevels)
+        }
+      }
+      
+      if (isPlaying) {
+        requestAnimationFrame(updateLevels)
+      }
     }
-  }, [speakerGains, channelLevels, objects])
+  }, [speakerGains, objects, isPlaying, vuMeterEngine])
 
   const activeCount = objects.length
 

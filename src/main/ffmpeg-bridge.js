@@ -115,7 +115,7 @@ export function decodeAudio(inputPath, options = {}) {
       '-y',
       '-i', inputPath,
       '-map', `0:a:${streamIndex}`,
-      '-c:a', 'pcm_f32le',
+      '-c:a', 'pcm_s16le', // FIX 1: Use 16-bit instead of 32-bit float to halve memory/disk usage
       '-ac', String(channels),
       '-ar', String(sampleRate),
       outputPath
@@ -201,4 +201,19 @@ export function generateWaveform(inputPath, options = {}) {
     })
     proc.on('error', () => resolve({ outputDir }))
   })
+}
+
+/**
+ * Cleanup temporary directories created during decoding/extraction
+ */
+export async function cleanupTempDir(dirPath) {
+  const { rm } = require('fs/promises')
+  try {
+    // Safety check: ensure we only delete directories in the temp path that we likely created
+    if (dirPath && dirPath.includes('atmos-viz')) {
+      await rm(dirPath, { recursive: true, force: true })
+    }
+  } catch (err) {
+    console.error('Failed to cleanup temp dir:', err)
+  }
 }

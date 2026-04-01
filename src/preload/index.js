@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('atmosAPI', {
   decodeAudio: (filePath, options) => ipcRenderer.invoke('audio:decode', filePath, options),
   decodeTrueHD: (filePath, options) => ipcRenderer.invoke('audio:decodeTrueHD', filePath, options),
   extractBitstream: (filePath, options) => ipcRenderer.invoke('audio:extractBitstream', filePath, options),
+  cleanupTemp: (dirPath) => ipcRenderer.invoke('audio:cleanupTemp', dirPath),
+
 
   // Platform info
   platform: process.platform

@@ -48,6 +48,7 @@ export class AudioEngine {
    */
   async loadAudio(audioData) {
     await this.init()
+    this.cleanupGraph()
     this.stop()
 
     try {
@@ -325,11 +326,39 @@ export class AudioEngine {
   }
 
   /**
+   * Disconnect all nodes and clear maps to allow Garbage Collection
+   */
+  cleanupGraph() {
+    if (this.splitter) {
+      try { this.splitter.disconnect() } catch {}
+      this.splitter = null
+    }
+
+    if (this.masterGain) {
+      try { this.masterGain.disconnect() } catch {}
+      this.masterGain = null
+    }
+
+    // Explicitly disconnect all analysers and gains
+    for (const analyser of this.analysers.values()) {
+      try { analyser.disconnect() } catch {}
+    }
+    for (const gainNode of this.gainNodes.values()) {
+      try { gainNode.disconnect() } catch {}
+    }
+
+    this.analysers.clear()
+    this.gainNodes.clear()
+  }
+
+  /**
    * Cleanup
    */
   destroy() {
     this.stop()
+    this.cleanupGraph()
     if (this.ctx) {
+
       this.ctx.close()
       this.ctx = null
     }

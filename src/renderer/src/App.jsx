@@ -27,12 +27,11 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(0.8)
-  const [channelLevels, setChannelLevels] = useState(new Map())
   const [objects, setObjects] = useState([])
   const [speakerGains, setSpeakerGains] = useState(new Map())
   const [metadataSource, setMetadataSource] = useState(null) // 'joc', 'adm', 'damf', 'synthetic', 'joc-encrypted', 'mat-encrypted', null
   const [error, setError] = useState(null)
-  
+
   // Developer Toggle to re-enable the synthetic SpatialSimulator fallback
   const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
   const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
@@ -64,10 +63,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    vuMeterEngine.onUpdate = (levels) => {
-      setChannelLevels(new Map(levels))
-    }
-
     audioEngine.onTimeUpdate = (time) => {
       // Handled in RAF loop
     }
@@ -112,7 +107,7 @@ export default function App() {
 
       const audioStream = analysis.audioStreams?.[0]
       if (!audioStream) throw new Error('No audio stream found')
-      
+
       setFileInfo({
         ...audioStream,
         format: analysis.format?.format_name || 'unknown',
@@ -120,29 +115,32 @@ export default function App() {
       })
 
       // Step 2: Decode audio to PCM WAV
-        const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
-          streamIndex: 0,
-          channels: Math.min(audioStream.channels || 8, 12),
-          sampleRate: audioStream.sampleRate || 48000
-        })
-        if (decodeResult.error) throw new Error(decodeResult.error)
+      const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
+        streamIndex: 0,
+        channels: Math.min(audioStream.channels || 8, 12),
+        sampleRate: audioStream.sampleRate || 48000
+      })
+      if (decodeResult.error) throw new Error(decodeResult.error)
 
       // Step 3: Load decoded audio
       const audioData = await window.atmosAPI.readBinary(decodeResult.outputPath)
       if (audioData.error) throw new Error(audioData.error)
+
+      // FIX: Clean up the massive temp WAV file immediately after reading into RAM
+      window.atmosAPI.cleanupTemp(decodeResult.outputDir)
 
       const loadResult = await audioEngine.loadAudio(audioData)
       setDuration(loadResult.duration)
       audioEngine.setVolume(volume)
 
       // Step 4: Parse metadata based on codec type
-        if (audioStream.isEAC3 || audioStream.isAC3) {
+      if (audioStream.isEAC3 || audioStream.isAC3) {
         await parseEAC3Metadata(filePath)
-          if (!metadataParserRef.current && audioStream.isAtmos) {
-            setMetadataSource('joc-encrypted')
-          }
-        } else if (getFileExtension(filePath) === '.wav') {
-          await parseADMMetadata(filePath)
+        if (!metadataParserRef.current && audioStream.isAtmos) {
+          setMetadataSource('joc-encrypted')
+        }
+      } else if (getFileExtension(filePath) === '.wav') {
+        await parseADMMetadata(filePath)
       } else if (audioStream.isTrueHD) {
         // Aggressively attempt Atmos decoding for any TrueHD stream if professional decoder is enabled,
         // because ffprobe often misses the Atmos profile in MAT 2.0 bitstreams.
@@ -217,7 +215,7 @@ export default function App() {
       setIsLoading(true)
       // Decode with truehdd to get DAMF (audio + metadata)
       const result = await window.atmosAPI.decodeTrueHD(filePath, { presentation: 3, bedConform: true })
-      
+
       if (result.error) {
         console.warn('truehdd decode error:', result.error)
         setMetadataSource('mat-encrypted')
@@ -227,11 +225,11 @@ export default function App() {
       if (result.metadataContent) {
         const parser = new DAMFParser()
         const parsed = parser.parse(result.metadataContent)
-        
+
         if (parsed.hasDAMF && parsed.objects.length > 0) {
           metadataParserRef.current = parser
           setMetadataSource('damf')
-          
+
           // If we got a high-quality PCM audio file from truehdd, we could reload it.
           // But for now, we keep the ffmpeg decode (fast) for audio and use truehdd for metadata.
           // In the future, we could replace the audio engine source with result.audioPath.
@@ -313,7 +311,7 @@ export default function App() {
         metadataParserRef.current = null
         setObjects([])
         setSpeakerGains(new Map())
-        
+
         if (fileInfo.isTrueHD && fileInfo.isAtmos) {
           setMetadataSource('mat-encrypted')
         } else if ((fileInfo.isEAC3 || fileInfo.isAC3) && fileInfo.isAtmos) {
@@ -348,10 +346,10 @@ export default function App() {
 
   return (
     <div className="app-container" onDragOver={handleDragOver} onDrop={handleDrop}>
-      <Header 
-        onOpenFile={handleFileOpen} 
-        fileName={fileName} 
-        isLoading={isLoading} 
+      <Header
+        onOpenFile={handleFileOpen}
+        fileName={fileName}
+        isLoading={isLoading}
         enableSyntheticUpmix={enableSyntheticUpmix}
         onToggleSynthetic={handleToggleSynthetic}
         useProfessionalDecoder={useProfessionalDecoder}
@@ -362,7 +360,7 @@ export default function App() {
         <TheaterView
           objects={objects}
           speakerGains={speakerGains}
-          channelLevels={channelLevels}
+          vuMeterEngine={vuMeterEngine}
           metadataSource={metadataSource}
           isPlaying={isPlaying}
           hasFile={hasFile}
@@ -372,7 +370,7 @@ export default function App() {
 
       <div className="side-panel">
         <FileInfo fileInfo={fileInfo} metadataSource={metadataSource} error={error} />
-        <ChannelMeters channelLevels={channelLevels} isPlaying={isPlaying} />
+        <ChannelMeters vuMeterEngine={vuMeterEngine} isPlaying={isPlaying} />
         <MetadataPanel objects={objects} metadataSource={metadataSource} />
       </div>
 

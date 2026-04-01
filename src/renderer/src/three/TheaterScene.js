@@ -35,8 +35,8 @@ export class TheaterScene {
     this.connectionLines = []
     this.roomGroup = new THREE.Group()
 
-    // State
     this.speakerGains = new Map()
+    this.speakerLevels = new Map()
     this.animationFrame = null
 
     this.init()
@@ -351,6 +351,8 @@ export class TheaterScene {
    * @param {Map<string, number>} levels - Speaker ID → dB level
    */
   updateSpeakerLevels(levels) {
+    this.speakerLevels = levels
+    
     for (const [spkId, db] of levels) {
       const glow = this.speakerGlows.get(spkId)
       const cube = this.speakerMeshes.get(spkId)
@@ -379,6 +381,14 @@ export class TheaterScene {
    */
   animate() {
     this.animationFrame = requestAnimationFrame(() => this.animate())
+    
+    // Smoothly update speaker levels natively in ThreeJS
+    if (this.speakerLevels.size > 0 && this.speakerGains.size === 0) {
+      // Re-run the update logic if we haven't already this frame
+      // In a real high-perf scenario, we'd move the loop here
+      this.updateSpeakerLevels(this.speakerLevels)
+    }
+
     this.controls.update()
     this.renderer.render(this.scene, this.camera)
   }
