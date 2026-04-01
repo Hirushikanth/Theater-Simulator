@@ -28,11 +28,20 @@ export default function MetadataPanel({ objects, metadataSource }) {
       <div className="panel-header">
         <span className="panel-title">Object Metadata</span>
         <span className="panel-badge badge-atmos">
-          {metadataSource === 'joc' ? 'JOC' : metadataSource === 'adm' ? 'ADM' : 'DAMF'}
+          {metadataSource === 'joc' ? 'JOC' : 
+           metadataSource === 'joc-encrypted' ? 'ENC JOC' : 
+           metadataSource === 'mat-encrypted' ? 'ENC MAT' : 
+           metadataSource === 'adm' ? 'ADM' : 'DAMF'}
         </span>
       </div>
       <div className="panel-body">
-        {sortedObjects.length === 0 ? (
+        {metadataSource?.includes('encrypted') ? (
+          <p style={{ fontSize: '11px', color: 'var(--color-orange)', textAlign: 'center', padding: '20px 10px', lineHeight: 1.4 }}>
+            Proprietary Dolby Metadata is encrypted.
+            <br /><br />
+            Playing decoded 7.1.4 bed audio. Object trajectories require external binary parser.
+          </p>
+        ) : sortedObjects.length === 0 ? (
           <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', textAlign: 'center' }}>
             Waiting for object data...
           </p>

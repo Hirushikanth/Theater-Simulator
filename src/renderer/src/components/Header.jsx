@@ -1,6 +1,6 @@
 import React from 'react'
 
-export default function Header({ onOpenFile, fileName, isLoading }) {
+export default function Header({ onOpenFile, fileName, isLoading, enableSyntheticUpmix, onToggleSynthetic }) {
   return (
     <div className="titlebar">
       <div className="titlebar-brand">
@@ -12,6 +12,15 @@ export default function Header({ onOpenFile, fileName, isLoading }) {
       </div>
 
       <div className="titlebar-actions">
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '16px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input 
+            type="checkbox" 
+            checked={enableSyntheticUpmix} 
+            onChange={onToggleSynthetic} 
+            style={{ accentColor: 'var(--color-cyan)', cursor: 'pointer' }}
+          />
+          Synthetic Upmix (Fallback)
+        </label>
         {isLoading && (
           <div className="loading-indicator">
             <div className="loading-spinner"></div>

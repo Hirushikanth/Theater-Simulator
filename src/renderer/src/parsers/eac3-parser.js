@@ -232,13 +232,10 @@ export class EAC3Parser {
       }
     }
 
-    // If no objects found via heuristic, attempt a broader pattern search
-    if (objects.length === 0) {
-      objects = this.fallbackObjectExtraction(data, scanStart, scanEnd)
-      if (objects.length > 0) {
-        complexity = objects.length
-      }
-    }
+    // We intentionally removed `fallbackObjectExtraction()` here per user request.
+    // If we cannot explicitly parse the proprietary JOC Huffman blocks, we will NOT
+    // fake the objects. We will return null so the Engine plays the 7.1 bed faithfully
+    // and correctly reports that the objects are encrypted.
 
     if (objects.length === 0) return null
 

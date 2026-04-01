@@ -30,8 +30,11 @@ export default function App() {
   const [channelLevels, setChannelLevels] = useState(new Map())
   const [objects, setObjects] = useState([])
   const [speakerGains, setSpeakerGains] = useState(new Map())
-  const [metadataSource, setMetadataSource] = useState(null) // 'joc', 'adm', 'damf', null
+  const [metadataSource, setMetadataSource] = useState(null) // 'joc', 'adm', 'damf', 'synthetic', 'joc-encrypted', 'mat-encrypted', null
   const [error, setError] = useState(null)
+  
+  // Developer Toggle to re-enable the synthetic SpatialSimulator fallback
+  const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
 
   const metadataParserRef = useRef(null)
   const rafRef = useRef(null)
@@ -134,12 +137,17 @@ export default function App() {
       // Step 4: Parse metadata based on codec type
       if (audioStream.isEAC3 || audioStream.isAC3) {
         await parseEAC3Metadata(filePath)
+        if (!metadataParserRef.current && audioStream.isAtmos) {
+           setMetadataSource('joc-encrypted')
+        }
       } else if (getFileExtension(filePath) === '.wav') {
         await parseADMMetadata(filePath)
+      } else if (audioStream.isTrueHD && audioStream.isAtmos) {
+        setMetadataSource('mat-encrypted')
       }
 
       // Step 5: Fallback to synthetic upmix simulator if no metadata found
-      if (!metadataParserRef.current) {
+      if (!metadataParserRef.current && enableSyntheticUpmix) {
         metadataParserRef.current = new SpatialSimulator(audioEngine)
         setMetadataSource('synthetic')
       }
@@ -165,9 +173,13 @@ export default function App() {
       const parser = new EAC3Parser()
       const result = parser.parse(bsData)
 
-      if (result.isAtmos || result.objects.length > 0) {
+      if (result.objects.length > 0) {
         metadataParserRef.current = parser
         setMetadataSource('joc')
+      } else if (result.isAtmos) {
+        // We know it has Atmos, but we stripped out the heuristic fakes,
+        // and we can't read the encrypted JOC natively yet.
+        setMetadataSource('joc-encrypted')
       }
     } catch (err) {
       console.warn('EAC3 metadata parse failed:', err)
@@ -244,6 +256,30 @@ export default function App() {
 
   const hasFile = !!fileInfo
 
+  const handleToggleSynthetic = useCallback((e) => {
+    const isEnabled = e.target.checked
+    setEnableSyntheticUpmix(isEnabled)
+
+    if (fileInfo && (!metadataSource || metadataSource.includes('encrypted') || metadataSource === 'synthetic')) {
+      if (isEnabled) {
+        metadataParserRef.current = new SpatialSimulator(audioEngine)
+        setMetadataSource('synthetic')
+      } else {
+        metadataParserRef.current = null
+        setObjects([])
+        setSpeakerGains(new Map())
+        
+        if (fileInfo.isTrueHD && fileInfo.isAtmos) {
+          setMetadataSource('mat-encrypted')
+        } else if ((fileInfo.isEAC3 || fileInfo.isAC3) && fileInfo.isAtmos) {
+          setMetadataSource('joc-encrypted')
+        } else {
+          setMetadataSource(null)
+        }
+      }
+    }
+  }, [fileInfo, metadataSource])
+
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -259,7 +295,13 @@ export default function App() {
 
   return (
     <div className="app-container" onDragOver={handleDragOver} onDrop={handleDrop}>
-      <Header onOpenFile={handleFileOpen} fileName={fileName} isLoading={isLoading} />
+      <Header 
+        onOpenFile={handleFileOpen} 
+        fileName={fileName} 
+        isLoading={isLoading} 
+        enableSyntheticUpmix={enableSyntheticUpmix}
+        onToggleSynthetic={handleToggleSynthetic}
+      />
 
       <div className="main-content">
         <TheaterView

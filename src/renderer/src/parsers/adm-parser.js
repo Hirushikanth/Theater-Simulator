@@ -62,7 +62,7 @@ export class ADMParser {
 
       if (chunkId === 'axml') {
         // Found the ADM XML chunk
-        const xmlBytes = new Uint8Array(buffer, offset + 8, chunkSize)
+        const xmlBytes = new Uint8Array(data.buffer, offset + 8, chunkSize)
         const decoder = new TextDecoder('utf-8')
         return decoder.decode(xmlBytes)
       }
