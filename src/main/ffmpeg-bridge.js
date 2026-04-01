@@ -86,8 +86,8 @@ function detectAtmos(stream) {
   const profile = (stream.profile || '').toLowerCase()
   // EAC3 with Atmos profile or high channel count
   if (codec === 'eac3' && (profile.includes('atmos') || stream.channels > 6)) return true
-  // TrueHD Atmos
-  if (codec === 'truehd' && (profile.includes('atmos') || stream.channels > 8)) return true
+  // TrueHD Atmos - often not explicitly labeled, so we treat 8+ channels as candidates
+  if (codec === 'truehd' && (profile.includes('atmos') || stream.channels >= 8)) return true
   // AC4 usually implies Atmos
   if (codec === 'ac4') return true
   return false

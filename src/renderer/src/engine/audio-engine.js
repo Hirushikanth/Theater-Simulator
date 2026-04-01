@@ -51,7 +51,7 @@ export class AudioEngine {
     this.stop()
 
     try {
-      this.buffer = await this.ctx.decodeAudioData(audioData.slice(0))
+        this.buffer = await this.ctx.decodeAudioData(audioData.slice(0))
       this.duration = this.buffer.duration
       this.channelCount = this.buffer.numberOfChannels
 

@@ -1,6 +1,10 @@
 import React from 'react'
 
-export default function Header({ onOpenFile, fileName, isLoading, enableSyntheticUpmix, onToggleSynthetic }) {
+export default function Header({ 
+  onOpenFile, fileName, isLoading, 
+  enableSyntheticUpmix, onToggleSynthetic,
+  useProfessionalDecoder, onToggleProfessional
+}) {
   return (
     <div className="titlebar">
       <div className="titlebar-brand">
@@ -12,6 +16,15 @@ export default function Header({ onOpenFile, fileName, isLoading, enableSyntheti
       </div>
 
       <div className="titlebar-actions">
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '16px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input 
+            type="checkbox" 
+            checked={useProfessionalDecoder} 
+            onChange={onToggleProfessional} 
+            style={{ accentColor: '#ff6b00', cursor: 'pointer' }}
+          />
+          Professional Decoder (truehdd)
+        </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '16px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
           <input 
             type="checkbox" 

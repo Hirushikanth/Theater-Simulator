@@ -1,7 +1,67 @@
-node_modules
-dist
-out
-.DS_Store
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Build outputs
+dist/
+dist-electron/
+out/
+release/
+*.app/
+*.exe/
+*.dmg/
+
+# Logs
+logs/
 *.log
-tmp
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime files
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Compiled binary addons
+build/Release
+
+# Bundled Binaries (Local Only)
+bin/truehdd
+bin/ffmpeg
+bin/ffprobe
+
+# Rust/truehdd source folder if cloned locally
+truehdd/
+
+# ESLint cache
+.eslintcache
+
+# dotenv environment variables files
 .env
+.env.test
+.env.production
+.env.local
+.env.*.local
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary Atmos/TrueHD decode folders
+tmp/
+truehd-decode-*/
+atmos-viz-*/
+
+# IDE/Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.sublime-project
+.sublime-workspace

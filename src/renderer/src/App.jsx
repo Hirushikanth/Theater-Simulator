@@ -35,6 +35,7 @@ export default function App() {
   
   // Developer Toggle to re-enable the synthetic SpatialSimulator fallback
   const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
+  const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
 
   const metadataParserRef = useRef(null)
   const rafRef = useRef(null)
@@ -111,7 +112,7 @@ export default function App() {
 
       const audioStream = analysis.audioStreams?.[0]
       if (!audioStream) throw new Error('No audio stream found')
-
+      
       setFileInfo({
         ...audioStream,
         format: analysis.format?.format_name || 'unknown',
@@ -119,12 +120,12 @@ export default function App() {
       })
 
       // Step 2: Decode audio to PCM WAV
-      const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
-        streamIndex: 0,
-        channels: Math.min(audioStream.channels || 8, 12),
-        sampleRate: audioStream.sampleRate || 48000
-      })
-      if (decodeResult.error) throw new Error(decodeResult.error)
+        const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
+          streamIndex: 0,
+          channels: Math.min(audioStream.channels || 8, 12),
+          sampleRate: audioStream.sampleRate || 48000
+        })
+        if (decodeResult.error) throw new Error(decodeResult.error)
 
       // Step 3: Load decoded audio
       const audioData = await window.atmosAPI.readBinary(decodeResult.outputPath)
@@ -135,15 +136,21 @@ export default function App() {
       audioEngine.setVolume(volume)
 
       // Step 4: Parse metadata based on codec type
-      if (audioStream.isEAC3 || audioStream.isAC3) {
+        if (audioStream.isEAC3 || audioStream.isAC3) {
         await parseEAC3Metadata(filePath)
-        if (!metadataParserRef.current && audioStream.isAtmos) {
-           setMetadataSource('joc-encrypted')
+          if (!metadataParserRef.current && audioStream.isAtmos) {
+            setMetadataSource('joc-encrypted')
+          }
+        } else if (getFileExtension(filePath) === '.wav') {
+          await parseADMMetadata(filePath)
+      } else if (audioStream.isTrueHD) {
+        // Aggressively attempt Atmos decoding for any TrueHD stream if professional decoder is enabled,
+        // because ffprobe often misses the Atmos profile in MAT 2.0 bitstreams.
+        if (useProfessionalDecoder) {
+          await parseTrueHDMetadata(filePath)
+        } else if (audioStream.isAtmos) {
+          setMetadataSource('mat-encrypted')
         }
-      } else if (getFileExtension(filePath) === '.wav') {
-        await parseADMMetadata(filePath)
-      } else if (audioStream.isTrueHD && audioStream.isAtmos) {
-        setMetadataSource('mat-encrypted')
       }
 
       // Step 5: Fallback to synthetic upmix simulator if no metadata found
@@ -201,6 +208,44 @@ export default function App() {
       }
     } catch (err) {
       console.warn('ADM parse failed:', err)
+    }
+  }
+
+  // Parse TrueHD metadata using truehdd bridge and DAMFParser
+  const parseTrueHDMetadata = async (filePath) => {
+    try {
+      setIsLoading(true)
+      // Decode with truehdd to get DAMF (audio + metadata)
+      const result = await window.atmosAPI.decodeTrueHD(filePath, { presentation: 3, bedConform: true })
+      
+      if (result.error) {
+        console.warn('truehdd decode error:', result.error)
+        setMetadataSource('mat-encrypted')
+        return
+      }
+
+      if (result.metadataContent) {
+        const parser = new DAMFParser()
+        const parsed = parser.parse(result.metadataContent)
+        
+        if (parsed.hasDAMF && parsed.objects.length > 0) {
+          metadataParserRef.current = parser
+          setMetadataSource('damf')
+          
+          // If we got a high-quality PCM audio file from truehdd, we could reload it.
+          // But for now, we keep the ffmpeg decode (fast) for audio and use truehdd for metadata.
+          // In the future, we could replace the audio engine source with result.audioPath.
+        } else {
+          setMetadataSource('mat-encrypted')
+        }
+      } else {
+        setMetadataSource('mat-encrypted')
+      }
+    } catch (err) {
+      console.warn('TrueHD metadata parse failed:', err)
+      setMetadataSource('mat-encrypted')
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -280,6 +325,14 @@ export default function App() {
     }
   }, [fileInfo, metadataSource])
 
+  const handleToggleProfessional = useCallback((e) => {
+    setUseProfessionalDecoder(e.target.checked)
+    // If we have a TrueHD file, we might want to re-load it to trigger the new decoder
+    if (fileInfo && fileInfo.isTrueHD && fileInfo.isAtmos) {
+      loadFile(fileInfo.filePath)
+    }
+  }, [fileInfo, loadFile])
+
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -301,6 +354,8 @@ export default function App() {
         isLoading={isLoading} 
         enableSyntheticUpmix={enableSyntheticUpmix}
         onToggleSynthetic={handleToggleSynthetic}
+        useProfessionalDecoder={useProfessionalDecoder}
+        onToggleProfessional={handleToggleProfessional}
       />
 
       <div className="main-content">

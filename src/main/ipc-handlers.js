@@ -1,6 +1,7 @@
 import { ipcMain, dialog } from 'electron'
 import { readFile } from 'fs/promises'
 import { analyzeFile, decodeAudio, extractBitstream } from './ffmpeg-bridge'
+import { analyzeTrueHD, decodeTrueHD } from './truehd-bridge'
 
 export function setupIpcHandlers() {
   // Open file dialog
@@ -13,8 +14,8 @@ export function setupIpcHandlers() {
           extensions: [
             'mkv', 'mka', 'webm', 'weba',
             'mp4', 'mov', 'qt', 'm4a', 'm4v',
-            'ac3', 'eac3', 'ec3',
-            'wav', 'laf'
+            'ac3', 'eac3', 'ec3', 'thd', 'truehd',
+            'wav', 'laf', 'atmos'
           ]
         },
         { name: 'All Files', extensions: ['*'] }
@@ -48,6 +49,15 @@ export function setupIpcHandlers() {
   ipcMain.handle('audio:extractBitstream', async (_, filePath, options) => {
     try {
       return await extractBitstream(filePath, options)
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  // Decode TrueHD with truehdd (Professional/High-fidelity)
+  ipcMain.handle('audio:decodeTrueHD', async (_, filePath, options) => {
+    try {
+      return await decodeTrueHD(filePath, options)
     } catch (err) {
       return { error: err.message }
     }

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('atmosAPI', {
   // Audio pipeline
   analyzeFile: (filePath) => ipcRenderer.invoke('audio:analyze', filePath),
   decodeAudio: (filePath, options) => ipcRenderer.invoke('audio:decode', filePath, options),
+  decodeTrueHD: (filePath, options) => ipcRenderer.invoke('audio:decodeTrueHD', filePath, options),
   extractBitstream: (filePath, options) => ipcRenderer.invoke('audio:extractBitstream', filePath, options),
 
   // Platform info
