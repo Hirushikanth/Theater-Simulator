@@ -269,9 +269,6 @@ export class TheaterScene {
         // Update size
         const scale = 0.08 + (obj.size || 0.05) * 0.3
         mesh.scale.setScalar(scale / 0.1)
-
-        // Update trail
-        this.updateTrail(obj.id, mesh.position.clone())
       } else {
         // Create new object sphere
         this.createObjectMesh(obj, roomPos)
@@ -286,12 +283,6 @@ export class TheaterScene {
         if (mesh.material.opacity < 0.01) {
           this.scene.remove(mesh)
           this.objectMeshes.delete(id)
-          // Remove trail
-          if (this.objectTrails.has(id)) {
-            const trail = this.objectTrails.get(id)
-            this.scene.remove(trail.line)
-            this.objectTrails.delete(id)
-          }
         }
       }
     }
@@ -322,54 +313,8 @@ export class TheaterScene {
 
     this.scene.add(mesh)
     this.objectMeshes.set(obj.id, mesh)
-
-    // Initialize trail
-    this.initializeTrail(obj.id, mesh.position.clone())
   }
 
-  /**
-   * Initialize movement trail for an object
-   */
-  initializeTrail(objId, startPos) {
-    const positions = new Float32Array(TRAIL_LENGTH * 3)
-    for (let i = 0; i < TRAIL_LENGTH; i++) {
-      positions[i * 3] = startPos.x
-      positions[i * 3 + 1] = startPos.y
-      positions[i * 3 + 2] = startPos.z
-    }
-
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-
-    const mat = new THREE.LineBasicMaterial({
-      color: 0x00ffd5,
-      transparent: true,
-      opacity: 0.2,
-      blending: THREE.AdditiveBlending
-    })
-
-    const line = new THREE.Line(geo, mat)
-    this.scene.add(line)
-    this.objectTrails.set(objId, { line, positions, head: 0 })
-  }
-
-  /**
-   * Update trail with new position
-   */
-  updateTrail(objId, newPos) {
-    if (!this.objectTrails.has(objId)) return
-
-    const trail = this.objectTrails.get(objId)
-    const { positions, head } = trail
-    const idx = (head % TRAIL_LENGTH) * 3
-
-    positions[idx] = newPos.x
-    positions[idx + 1] = newPos.y
-    positions[idx + 2] = newPos.z
-
-    trail.head = (head + 1) % TRAIL_LENGTH
-    trail.line.geometry.attributes.position.needsUpdate = true
-  }
 
   /**
    * Update speaker glow based on VBAP gains

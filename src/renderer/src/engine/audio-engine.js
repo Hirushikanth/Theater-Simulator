@@ -91,15 +91,24 @@ export class AudioEngine {
       
       const analyser = this.ctx.createAnalyser()
       analyser.fftSize = 2048
-      analyser.smoothingTimeConstant = 0.8
+      analyser.smoothingTimeConstant = 0.3
       analyser.minDecibels = -90
       analyser.maxDecibels = 0
 
       const gainNode = this.ctx.createGain()
       gainNode.gain.value = 1.0
 
-      // Connect: splitter[ch] → analyser → gainNode → merger → master
+      // Connect: splitter[ch] → analyser
       this.splitter.connect(analyser, ch)
+      
+      // CRITICAL GARBAGE COLLECTION BUG FIX: Chrome suspends dead-end nodes!
+      // Wire the analyser cleanly into a 0.0 volume sink down to the master output.
+      const dummyGain = this.ctx.createGain()
+      dummyGain.gain.value = 0.0
+      analyser.connect(dummyGain)
+      dummyGain.connect(this.masterGain)
+
+      // Connect splitter → gainNode → merger (playback tracking)
       this.splitter.connect(gainNode, ch)
 
       this.analysers.set(speakerId, analyser)

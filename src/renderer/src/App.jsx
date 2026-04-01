@@ -11,11 +11,13 @@ import { EAC3Parser } from './parsers/eac3-parser'
 import { ADMParser } from './parsers/adm-parser'
 import { DAMFParser } from './parsers/damf-parser'
 import { SpatialSimulator } from './engine/spatial-simulator'
+import { VUMeterEngine } from './engine/vu-meter-engine'
 import { SPEAKERS } from './utils/constants'
 import { getFileExtension, getFileName } from './utils/helpers'
 
 const audioEngine = new AudioEngine()
 const vbapRenderer = new VBAPRenderer()
+const vuMeterEngine = new VUMeterEngine(audioEngine, vbapRenderer)
 
 export default function App() {
   const [fileInfo, setFileInfo] = useState(null)
@@ -41,10 +43,6 @@ export default function App() {
     const time = audioEngine.getCurrentTime()
     setCurrentTime(time)
 
-    // Get channel levels
-    const levels = audioEngine.getAllChannelLevels()
-    setChannelLevels(new Map(levels))
-
     // Get objects at current time from metadata parser
     if (metadataParserRef.current) {
       const objs = metadataParserRef.current.getObjectsAtTime(time)
@@ -54,6 +52,7 @@ export default function App() {
       if (objs.length > 0) {
         const gains = vbapRenderer.calculateSceneGains(objs)
         setSpeakerGains(gains)
+        vuMeterEngine.setSpeakerGains(gains) // Forward vector gains to VU Engine
       }
     }
 
@@ -61,15 +60,21 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    vuMeterEngine.onUpdate = (levels) => {
+      setChannelLevels(new Map(levels))
+    }
+
     audioEngine.onTimeUpdate = (time) => {
       // Handled in RAF loop
     }
     audioEngine.onEnded = () => {
       setIsPlaying(false)
+      vuMeterEngine.stop()
     }
 
     return () => {
       audioEngine.destroy()
+      vuMeterEngine.stop()
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
   }, [])
@@ -192,10 +197,12 @@ export default function App() {
     if (isPlaying) {
       audioEngine.pause()
       setIsPlaying(false)
+      vuMeterEngine.stop()
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     } else {
       audioEngine.play()
       setIsPlaying(true)
+      vuMeterEngine.start()
       rafRef.current = requestAnimationFrame(updateLoop)
     }
   }, [isPlaying, updateLoop])
@@ -205,6 +212,8 @@ export default function App() {
     audioEngine.pauseTime = 0
     setIsPlaying(false)
     setCurrentTime(0)
+    vuMeterEngine.stop()
+    setSpeakerGains(new Map())
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
   }, [])
 
@@ -234,6 +243,19 @@ export default function App() {
   }, [loadFile])
 
   const hasFile = !!fileInfo
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT') return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        handlePlay()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handlePlay])
 
   return (
     <div className="app-container" onDragOver={handleDragOver} onDrop={handleDrop}>

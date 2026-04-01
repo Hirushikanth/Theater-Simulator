@@ -351,6 +351,7 @@ html, body, #root {
   flex-direction: column;
   align-items: center;
   gap: 3px;
+  min-width: 0;
 }
 
 .meter-bar-container {
@@ -396,6 +397,11 @@ html, body, #root {
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   text-align: center;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 /* ── Metadata Panel ── */

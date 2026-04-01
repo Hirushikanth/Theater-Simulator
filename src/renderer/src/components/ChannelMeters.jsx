@@ -5,12 +5,12 @@ import { dbToPercent } from '../utils/helpers'
 const METER_LAYOUT = [
   { id: 'FL',  label: 'FL' },
   { id: 'C',   label: 'C' },
+  { id: 'LFE', label: 'LFE' },
   { id: 'FR',  label: 'FR' },
   { id: 'SL',  label: 'SL' },
   { id: 'SR',  label: 'SR' },
   { id: 'SBL', label: 'SBL' },
   { id: 'SBR', label: 'SBR' },
-  { id: 'LFE', label: 'LFE' },
   { id: 'TFL', label: 'TFL' },
   { id: 'TFR', label: 'TFR' },
   { id: 'TRL', label: 'TRL' },
@@ -30,7 +30,7 @@ export default function ChannelMeters({ channelLevels, isPlaying }) {
         color: speaker?.color || '#666',
         group: speaker?.group || 'unknown',
         percent: isPlaying ? percent : 0,
-        db: isPlaying ? Math.max(-60, db) : -Infinity
+        db: isPlaying && db > -100 ? Math.max(-60, db) : -60 // Minimum -60 explicitly
       }
     })
   }, [channelLevels, isPlaying])
@@ -67,7 +67,7 @@ export default function ChannelMeters({ channelLevels, isPlaying }) {
                 {meter.label}
               </span>
               <span className="meter-db">
-                {meter.db > -60 ? `${Math.round(meter.db)}` : '—'}
+                {meter.db > -60 ? `${Math.round(meter.db)}dB` : '—'}
               </span>
             </div>
           ))}

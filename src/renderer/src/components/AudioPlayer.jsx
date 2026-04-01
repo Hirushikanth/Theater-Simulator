@@ -5,13 +5,32 @@ export default function AudioPlayer({
   isPlaying, currentTime, duration, volume, fileInfo,
   metadataSource, objectCount, onPlay, onStop, onSeek, onVolumeChange
 }) {
+  const [isDragging, setIsDragging] = React.useState(false)
+  const trackRef = React.useRef(null)
+
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
-  const handleProgressClick = useCallback((e) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const ratio = (e.clientX - rect.left) / rect.width
+  const updateProgress = useCallback((clientX) => {
+    if (!trackRef.current) return
+    const rect = trackRef.current.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
     onSeek(ratio * duration)
   }, [duration, onSeek])
+
+  const handlePointerDown = useCallback((e) => {
+    setIsDragging(true)
+    updateProgress(e.clientX)
+    e.target.setPointerCapture(e.pointerId)
+  }, [updateProgress])
+
+  const handlePointerMove = useCallback((e) => {
+    if (isDragging) updateProgress(e.clientX)
+  }, [isDragging, updateProgress])
+
+  const handlePointerUp = useCallback((e) => {
+    setIsDragging(false)
+    e.target.releasePointerCapture(e.pointerId)
+  }, [])
 
   const handleVolumeInput = useCallback((e) => {
     onVolumeChange(parseFloat(e.target.value))
@@ -42,7 +61,15 @@ export default function AudioPlayer({
 
       {/* Timeline */}
       <div className="player-timeline">
-        <div className="player-progress-track" onClick={handleProgressClick}>
+        <div 
+          className="player-progress-track" 
+          ref={trackRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          style={{ cursor: 'pointer', userSelect: 'none' }}
+        >
           <div className="player-progress-fill" style={{ width: `${progress}%` }} />
         </div>
         <div className="player-time-row">
@@ -62,11 +89,6 @@ export default function AudioPlayer({
           {metadataSource && (
             <span className="panel-badge badge-atmos" style={{ fontSize: '8px' }}>
               ATMOS
-            </span>
-          )}
-          {objectCount > 0 && (
-            <span style={{ fontSize: '10px', color: 'var(--color-cyan)', fontFamily: 'var(--font-mono)' }}>
-              {objectCount} obj
             </span>
           )}
         </div>
