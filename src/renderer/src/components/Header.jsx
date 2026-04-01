@@ -1,0 +1,35 @@
+import React from 'react'
+
+export default function Header({ onOpenFile, fileName, isLoading }) {
+  return (
+    <div className="titlebar">
+      <div className="titlebar-brand">
+        <div className="titlebar-logo">D</div>
+        <div>
+          <div className="titlebar-title">ATMOS THEATER VISUALIZER</div>
+          <div className="titlebar-subtitle">Spatial Audio Diagnostic Engine</div>
+        </div>
+      </div>
+
+      <div className="titlebar-actions">
+        {isLoading && (
+          <div className="loading-indicator">
+            <div className="loading-spinner"></div>
+            <span>Decoding...</span>
+          </div>
+        )}
+        {fileName && !isLoading && (
+          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+            {fileName}
+          </span>
+        )}
+        <button className="btn btn-primary" onClick={onOpenFile}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+          </svg>
+          Open File
+        </button>
+      </div>
+    </div>
+  )
+}
