@@ -54,9 +54,9 @@ export async function decodeTrueHD(filePath, options = {}) {
   const outputPrefix = join(outputDir, 'decoded')
 
   return new Promise((resolve, reject) => {
-  if (!existsSync(outputDir)) {
-    mkdirSync(outputDir, { recursive: true })
-  }
+    if (!existsSync(outputDir)) {
+      mkdirSync(outputDir, { recursive: true })
+    }
 
     const args = [
       'decode',
@@ -88,7 +88,7 @@ export async function decodeTrueHD(filePath, options = {}) {
         // truehdd creates files: decoded.atmos, decoded.atmos.audio, decoded.atmos.metadata
         const metadataPath = `${outputPrefix}.atmos.metadata`
         const audioPath = `${outputPrefix}.atmos.audio`
-        
+
         console.log(`[truehdd] Decode success. Metadata: ${metadataPath}, Audio: ${audioPath}`)
 
         const result = {

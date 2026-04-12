@@ -77,8 +77,8 @@ export default function FileInfo({ fileInfo, metadataSource, error }) {
               <span className="file-info-label">Metadata</span>
               <span className="file-info-value" style={{ color: metadataSource === 'synthetic' || metadataSource.includes('encrypted') ? 'var(--color-orange)' : 'var(--color-cyan)' }}>
                 {metadataSource === 'joc' ? 'JOC OAMD' :
-                 metadataSource === 'joc-encrypted' ? 'E-AC-3 (Objects Encrypted)' :
-                 metadataSource === 'mat-encrypted' ? 'TrueHD MAT (Objects Encrypted)' :
+                 metadataSource === 'joc-encrypted' ? 'E-AC-3 (Parse Fallback)' :
+                 metadataSource === 'mat-encrypted' ? 'TrueHD MAT (Parse Fallback)' :
                  metadataSource === 'adm' ? 'ADM XML' :
                  metadataSource === 'damf' ? 'DAMF YAML' : 
                  metadataSource === 'synthetic' ? 'SYNTHETIC UPMIX' : 'Unknown'}

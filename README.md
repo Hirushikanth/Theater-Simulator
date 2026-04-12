@@ -16,10 +16,10 @@ This project was developed with significant **AI assistance (Antigravity by Goog
 - **Advanced Spatial Panning (VBAP):** Implements **Vector Base Amplitude Panning** to calculate precise speaker gains based on 3D object trajectories.
 - **Native Audio Pipeline:** Uses bundled **FFmpeg** and **ffprobe** for high-performance audio decoding (E-AC-3, AC-3, TrueHD, ADM BWF) directly on your desktop.
 - **Dynamic Metadata Parsing:** 
-  - **JOC OAMD:** Heuristic-based extraction of Object Audio Metadata from E-AC-3 streams.
+  - **Native E-AC-3 JOC:** A custom-built bit-level protocol decoder that extracts exact Object Audio Metadata (OAMD) natively from Dolby Digital Plus Atmos streams—calculating dynamic spatial keyframes flawlessly!
   - **ADM BWF:** Full ITU-R BS.2076 XML metadata parsing.
   - **DAMF:** Support for `.atmos.metadata` YAML trajectories.
-- **Synthetic Upmix Engine:** A fallback spatializer that generates audio-reactive virtual objects when proprietary metadata is encrypted or missing, ensuring the 7.1.4 array always remains visually active.
+- **Synthetic Upmix Engine:** A fallback spatializer that generates audio-reactive virtual objects when proprietary MAT metadata is un-parsable, ensuring the 7.1.4 array always remains visually active.
 - **Premium Glassmorphic UI:** A professional-grade dashboard with 12-channel high-resolution VU metering and real-time object tracking.
 
 ---
@@ -71,17 +71,21 @@ This project was developed with significant **AI assistance (Antigravity by Goog
 ---
 
 ## 🏛️ Credits & Acknowledgements
+- **[Cavern](https://github.com/VoidXH/Cavern)**: Monumental open-source research and reverse-engineering of the Dolby E-AC-3 JOC bit-level protocols, directly enabling our native Javascript parser.
 - **[truehdd](https://github.com/truehdd/truehdd)**: The core engine for professional-grade TrueHD/Atmos OAMD extraction.
 - **Google DeepMind (Antigravity)**: AI-assisted engineering for spatial math and bitstream parsing.
 - **Three.js**: The powerful 3D engine driving the theater visualization.
 
 ---
 
-## ⚠️ Metadata Encryption & Limitations
-While this tool is designed to visualize Dolby Atmos objects, it is important to note:
-- **Proprietary Encryption:** Many commercial Dolby Atmos streams (especially from streaming services or retail Blu-rays) have their Object Audio Metadata (OAMD) **encrypted**.
-- **Fallback to Bed Channels:** When the metadata is encrypted or missing, the playback will naturally fall back to the standard **7.1 or 5.1 Bed Channels**.
-- **Synthetic Visualization:** To ensure the 3D theater remains dynamic even during encrypted playback, the app includes a **Synthetic Object Engine**. This generates audio-reactive virtual objects that simulate spatial movement based on frequency energy, providing a visual representation of the soundstage even when true metadata is inaccessible.
+## 🔊 Native E-AC-3 JOC Support
+The Theater Simulator formally features a **completely native bitstream parser for E-AC-3 JOC files**! 
+This means any standard Dolby Digital Plus Atmos file (`.eac3`, `.mp4`, `.mkv`) generated from streaming platforms properly parses through our bespoke `eac3-parser`. We read every single dependent substream and map the 3D differential position data (OAMD) directly into the Three.js physics sandbox!
+
+## ⚠️ Metadata Limitations & Synthetic Engine
+While E-AC-3, ADM BWF, and DAMF provide breathtaking native spatial paths, it is important to note:
+- **TrueHD MAT 2.0 Complexity:** Currently, parsing native TrueHD Atmos relies heavily on the `truehdd` binary decoder, and some proprietary TrueHD payloads might trigger a **Parse Fallback** if they contain un-supported MAT multiplexing states.
+- **Synthetic Visualization:** To ensure the 3D theater remains dynamic when encountering files that trigger a Parse Fallback, the app auto-engages a **Synthetic Object Engine**. This generates audio-reactive virtual objects that synthesize spatial movement based on frequency energy—providing a stunning visual representation of the soundstage even when true metadata is locked.
 
 ---
 

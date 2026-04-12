@@ -29,17 +29,17 @@ export default function MetadataPanel({ objects, metadataSource }) {
         <span className="panel-title">Object Metadata</span>
         <span className="panel-badge badge-atmos">
           {metadataSource === 'joc' ? 'JOC' : 
-           metadataSource === 'joc-encrypted' ? 'ENC JOC' : 
-           metadataSource === 'mat-encrypted' ? 'ENC MAT' : 
+           metadataSource === 'joc-encrypted' ? 'JOC ⚠' : 
+           metadataSource === 'mat-encrypted' ? 'MAT ⚠' : 
            metadataSource === 'adm' ? 'ADM' : 'DAMF'}
         </span>
       </div>
       <div className="panel-body">
         {metadataSource?.includes('encrypted') ? (
           <p style={{ fontSize: '11px', color: 'var(--color-orange)', textAlign: 'center', padding: '20px 10px', lineHeight: 1.4 }}>
-            Proprietary Dolby Metadata is encrypted.
+            Object metadata could not be parsed from this stream.
             <br /><br />
-            Playing decoded 7.1.4 bed audio. Object trajectories require external binary parser.
+            Playing decoded bed audio. The native OAMD parser may need updates for this encoder variant.
           </p>
         ) : sortedObjects.length === 0 ? (
           <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', textAlign: 'center' }}>

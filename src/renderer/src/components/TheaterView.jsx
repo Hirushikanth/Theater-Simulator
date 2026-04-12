@@ -5,6 +5,7 @@ import { SUPPORTED_EXTENSIONS } from '../utils/constants'
 export default function TheaterView({ objects, speakerGains, vuMeterEngine, metadataSource, isPlaying, hasFile, onOpenFile }) {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
+  const rafRef = useRef(null)
 
   // Initialize Three.js scene
   useEffect(() => {
@@ -44,12 +45,16 @@ export default function TheaterView({ objects, speakerGains, vuMeterEngine, meta
         }
         
         if (isPlaying) {
-          requestAnimationFrame(updateLevels)
+          rafRef.current = requestAnimationFrame(updateLevels)
         }
       }
       
       if (isPlaying) {
-        requestAnimationFrame(updateLevels)
+        rafRef.current = requestAnimationFrame(updateLevels)
+      }
+      
+      return () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
       }
     }
   }, [speakerGains, objects, isPlaying, vuMeterEngine])

@@ -140,8 +140,8 @@ export function decodeAudio(inputPath, options = {}) {
  * Extract raw codec bitstream for metadata parsing
  */
 export function extractBitstream(inputPath, options = {}) {
-  const { streamIndex = 0 } = options
-  const ext = '.eac3'  // will be adjusted based on codec
+  const { streamIndex = 0, codecRawFileExt = '.eac3' } = options
+  const ext = codecRawFileExt
   const outputDir = join(tmpdir(), `atmos-viz-${randomUUID()}`)
   const outputPath = join(outputDir, `raw${ext}`)
 
