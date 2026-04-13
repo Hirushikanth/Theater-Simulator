@@ -79,6 +79,10 @@ export class AudioEngine {
 
     // Channel splitter
     this.splitter = this.ctx.createChannelSplitter(this.channelCount)
+    // CRITICAL: Prevent browser from automatically downmixing 7.1 to 5.1/Stereo
+    // based on OS speaker setup before splitting!
+    this.splitter.channelCountMode = 'explicit'
+    this.splitter.channelInterpretation = 'discrete'
 
     // Create analyser for each channel
     this.analysers.clear()
@@ -154,6 +158,37 @@ export class AudioEngine {
         srGain.connect(merger, 0, 1)
       }
 
+      // Mix surround backs
+      if (this.channelCount > 6) {
+        const sblGain = this.ctx.createGain()
+        const sbrGain = this.ctx.createGain()
+        sblGain.gain.value = 0.4
+        sbrGain.gain.value = 0.4
+        this.splitter.connect(sblGain, 6)
+        this.splitter.connect(sbrGain, 7)
+        sblGain.connect(merger, 0, 0)
+        sbrGain.connect(merger, 0, 1)
+      }
+
+      // Mix heights
+      if (this.channelCount > 8) {
+        const heightLGain = this.ctx.createGain()
+        const heightRGain = this.ctx.createGain()
+        heightLGain.gain.value = 0.25
+        heightRGain.gain.value = 0.25
+        
+        // TFL(8), TRL(10)
+        this.splitter.connect(heightLGain, 8)
+        if (this.channelCount > 10) this.splitter.connect(heightLGain, 10)
+        
+        // TFR(9), TRR(11)
+        this.splitter.connect(heightRGain, 9)
+        if (this.channelCount > 11) this.splitter.connect(heightRGain, 11)
+
+        heightLGain.connect(merger, 0, 0)
+        heightRGain.connect(merger, 0, 1)
+      }
+
       leftGain.connect(merger, 0, 0)
       rightGain.connect(merger, 0, 1)
     }
@@ -184,6 +219,9 @@ export class AudioEngine {
 
     this.source = this.ctx.createBufferSource()
     this.source.buffer = this.buffer
+    this.source.channelCount = this.channelCount
+    this.source.channelCountMode = 'explicit'
+    this.source.channelInterpretation = 'discrete'
     this.source.connect(this.splitter)
     
     this.source.onended = () => {

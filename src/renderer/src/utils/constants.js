@@ -31,21 +31,35 @@ export const ROOM = {
   radius: 3 // speakers placed on a sphere of 3m radius
 }
 
-// Convert azimuth/elevation to 3D position on a unit sphere (and offset for room)
-export function speakerToCartesian(speaker, radius = ROOM.radius) {
+// Convert azimuth/elevation string to 3D position intersecting room bounds (AABB RayCast)
+export function speakerToCartesian(speaker) {
+  if (speaker.id === 'LFE') {
+    return { x: 0, y: -1, z: -ROOM.depth / 2 + 0.5 } // Front ground
+  }
+
   const azRad = (speaker.azimuth * Math.PI) / 180
   const elRad = (speaker.elevation * Math.PI) / 180
   
-  // Ear level is y = 0. Floor is y = -1.
-  let yVal = radius * Math.sin(elRad)
-  if (speaker.id === 'LFE') {
-    yVal = -1 // Subwoofer on the ground
-  }
+  // Direction vector D from listening center (0,0,0)
+  const dx = Math.cos(elRad) * Math.sin(azRad)
+  const dy = Math.sin(elRad)
+  const dz = -Math.cos(elRad) * Math.cos(azRad)
+  
+  // Room AABB Limits
+  const minX = -ROOM.width / 2, maxX = ROOM.width / 2
+  const minY = -1, maxY = ROOM.height
+  const minZ = -ROOM.depth / 2, maxZ = ROOM.depth / 2
+
+  let t = Infinity
+
+  if (Math.abs(dx) > 1e-6) t = Math.min(t, dx > 0 ? maxX / dx : minX / dx)
+  if (Math.abs(dy) > 1e-6) t = Math.min(t, dy > 0 ? maxY / dy : minY / dy)
+  if (Math.abs(dz) > 1e-6) t = Math.min(t, dz > 0 ? maxZ / dz : minZ / dz)
 
   return {
-    x: radius * Math.cos(elRad) * Math.sin(azRad),
-    y: Math.max(-1, yVal), // Ensure nothing goes below floor
-    z:-radius * Math.cos(elRad) * Math.cos(azRad) // negative Z = forward
+    x: t * dx,
+    y: Math.max(minY, t * dy), // Hard clamp to floor just in case
+    z: t * dz
   }
 }
 

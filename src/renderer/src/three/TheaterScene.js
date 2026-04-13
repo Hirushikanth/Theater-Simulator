@@ -12,7 +12,9 @@
 
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { SPEAKERS, speakerToCartesian, ROOM, atmosToRoom, objectColor, hexToRgb, TRAIL_LENGTH } from '../utils/constants'
+import { ROOM, atmosToRoom, objectColor, hexToRgb } from '../utils/constants'
+import { RoomEnvironment } from './RoomEnvironment'
+import { SpeakerSystem } from './SpeakerSystem'
 
 export class TheaterScene {
   constructor(container) {
@@ -26,14 +28,14 @@ export class TheaterScene {
     this.renderer = null
     this.controls = null
 
+    // Modular subsystem controllers
+    this.room = null
+    this.speakers = null
+
     // Scene objects
-    this.speakerMeshes = new Map()
-    this.speakerGlows = new Map()
-    this.speakerLabels = []
     this.objectMeshes = new Map()
     this.objectTrails = new Map()
     this.connectionLines = []
-    this.roomGroup = new THREE.Group()
 
     this.speakerGains = new Map()
     this.speakerLevels = new Map()
@@ -82,9 +84,11 @@ export class TheaterScene {
     this.scene.add(dirLight)
 
     // Build scene
-    this.createRoom()
-    this.createSpeakers()
-    this.createRoomBoundaries()
+    this.room = new RoomEnvironment()
+    this.scene.add(this.room.group)
+
+    this.speakers = new SpeakerSystem()
+    this.scene.add(this.speakers.group)
 
     // Handle resize
     this._onResize = () => this.onResize()
@@ -92,189 +96,6 @@ export class TheaterScene {
 
     // Start render loop
     this.animate()
-  }
-
-  /**
-   * Create the room wireframe
-   */
-  createRoom() {
-    const w = ROOM.width / 2
-    const h = ROOM.height
-    const d = ROOM.depth / 2
-
-    // Room edges with subtle glow
-    const edgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x1a1a2e,
-      transparent: true,
-      opacity: 0.4
-    })
-
-    // Floor rectangle
-    const floorGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-w, -1, -d),
-      new THREE.Vector3(w, -1, -d),
-      new THREE.Vector3(w, -1, d),
-      new THREE.Vector3(-w, -1, d),
-      new THREE.Vector3(-w, -1, -d)
-    ])
-    this.roomGroup.add(new THREE.Line(floorGeo, edgeMaterial))
-
-    // Ceiling rectangle
-    const ceilGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-w, h, -d),
-      new THREE.Vector3(w, h, -d),
-      new THREE.Vector3(w, h, d),
-      new THREE.Vector3(-w, h, d),
-      new THREE.Vector3(-w, h, -d)
-    ])
-    this.roomGroup.add(new THREE.Line(ceilGeo, edgeMaterial))
-
-    // Vertical edges
-    const corners = [[-w, -d], [w, -d], [w, d], [-w, d]]
-    for (const [cx, cz] of corners) {
-      const vGeo = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(cx, -1, cz),
-        new THREE.Vector3(cx, h, cz)
-      ])
-      this.roomGroup.add(new THREE.Line(vGeo, edgeMaterial))
-    }
-
-    // Semi-transparent floor
-    const floorPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(ROOM.width, ROOM.depth),
-      new THREE.MeshBasicMaterial({
-        color: 0x0a0a14,
-        transparent: true,
-        opacity: 0.6,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      })
-    )
-    floorPlane.rotation.x = -Math.PI / 2
-    floorPlane.position.y = -1.01
-    this.roomGroup.add(floorPlane)
-
-    // Screen at the front
-    const screenGeo = new THREE.PlaneGeometry(ROOM.width * 0.8, ROOM.height * 0.5)
-    const screenMat = new THREE.MeshBasicMaterial({
-      color: 0x0d0d1a,
-      transparent: true,
-      opacity: 0.8,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    })
-    const screen = new THREE.Mesh(screenGeo, screenMat)
-    screen.position.set(0, ROOM.height * 0.35, -ROOM.depth / 2 + 0.05)
-    this.roomGroup.add(screen)
-
-    // Screen border glow
-    const screenBorderGeo = new THREE.EdgesGeometry(screenGeo)
-    const screenBorder = new THREE.LineSegments(
-      screenBorderGeo,
-      new THREE.LineBasicMaterial({ color: 0x1a1a3e, transparent: true, opacity: 0.5 })
-    )
-    screenBorder.position.copy(screen.position)
-    this.roomGroup.add(screenBorder)
-
-    this.scene.add(this.roomGroup)
-  }
-
-  /**
-   * Create room boundaries (grids)
-   */
-  createRoomBoundaries() {
-    const createGridPlane = (width, height, isFloor = false) => {
-      const geo = new THREE.PlaneGeometry(width, height, Math.floor(width * 2), Math.floor(height * 2))
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0x111122,
-        wireframe: true,
-        transparent: true,
-        opacity: isFloor ? 0.3 : 0.15,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      })
-      return new THREE.Mesh(geo, mat)
-    }
-
-    // Floor grid plane
-    const floorGrid = createGridPlane(ROOM.width, ROOM.depth, true)
-    floorGrid.rotation.x = -Math.PI / 2
-    floorGrid.position.y = -0.99
-    this.scene.add(floorGrid)
-
-    // Walls
-    const wallHeight = ROOM.height + 1 // from -1 to 3.5
-    const centerY = (ROOM.height - 1) / 2 // 1.25
-
-    // Back wall grid
-    const backGrid = createGridPlane(ROOM.width, wallHeight)
-    backGrid.position.set(0, centerY, -ROOM.depth / 2)
-    this.scene.add(backGrid)
-
-    // Front wall grid
-    const frontGrid = createGridPlane(ROOM.width, wallHeight)
-    frontGrid.position.set(0, centerY, ROOM.depth / 2)
-    this.scene.add(frontGrid)
-
-    // Left wall grid
-    const leftGrid = createGridPlane(ROOM.depth, wallHeight)
-    leftGrid.rotation.y = Math.PI / 2
-    leftGrid.position.set(-ROOM.width / 2, centerY, 0)
-    this.scene.add(leftGrid)
-
-    // Right wall grid
-    const rightGrid = createGridPlane(ROOM.depth, wallHeight)
-    rightGrid.rotation.y = -Math.PI / 2
-    rightGrid.position.set(ROOM.width / 2, centerY, 0)
-    this.scene.add(rightGrid)
-  }
-
-  /**
-   * Create speaker cubes with glow indicators
-   */
-  createSpeakers() {
-    for (const speaker of SPEAKERS) {
-      const pos3D = speakerToCartesian(speaker)
-      const rgb = hexToRgb(speaker.color)
-
-      // Speaker cube
-      const isLFE = speaker.id === 'LFE'
-      // Draw LFE as a bigger, wider object (subwoofer)
-      const cubeGeo = isLFE
-        ? new THREE.BoxGeometry(0.5, 0.4, 0.5) 
-        : new THREE.BoxGeometry(0.15, 0.15, 0.15)
-      
-      const cubeMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(rgb.r, rgb.g, rgb.b),
-        emissive: new THREE.Color(rgb.r * 0.2, rgb.g * 0.2, rgb.b * 0.2),
-        emissiveIntensity: 0.3,
-        metalness: 0.8,
-        roughness: 0.2,
-        transparent: true,
-        opacity: 0.5,
-        depthWrite: false
-      })
-      const cube = new THREE.Mesh(cubeGeo, cubeMat)
-      // Shift LFE down so it sits flush on the grid
-      const yOffset = isLFE ? 0.2 : 0
-      cube.position.set(pos3D.x, pos3D.y + yOffset, pos3D.z)
-      
-      this.scene.add(cube)
-      this.speakerMeshes.set(speaker.id, cube)
-
-      // Glow sphere (larger, semi-transparent)
-      const glowGeo = new THREE.SphereGeometry(isLFE ? 0.6 : 0.25, 16, 16)
-      const glowMat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(rgb.r, rgb.g, rgb.b),
-        transparent: true,
-        opacity: 0.0,
-        blending: THREE.AdditiveBlending
-      })
-      const glow = new THREE.Mesh(glowGeo, glowMat)
-      glow.position.copy(cube.position)
-      this.scene.add(glow)
-      this.speakerGlows.set(speaker.id, glow)
-    }
   }
 
   /**
@@ -359,28 +180,9 @@ export class TheaterScene {
    * @param {Map<string, number>} gains - Speaker ID → gain (0-1)
    */
   updateSpeakerGains(gains) {
-    for (const [spkId, gain] of gains) {
-      const glow = this.speakerGlows.get(spkId)
-      const cube = this.speakerMeshes.get(spkId)
-      if (!glow || !cube) continue
-
-      const intensity = Math.min(1, gain)
-
-      // Glow opacity
-      glow.material.opacity = intensity * 0.4
-      glow.scale.setScalar(1 + intensity * 0.5)
-
-      // Cube emissive boost
-      const speaker = SPEAKERS.find(s => s.id === spkId)
-      if (speaker) {
-        const rgb = hexToRgb(speaker.color)
-        cube.material.emissive.setRGB(
-          rgb.r * intensity,
-          rgb.g * intensity,
-          rgb.b * intensity
-        )
-        cube.material.emissiveIntensity = 0.3 + intensity * 1.5
-      }
+    this.speakerGains = gains
+    if (this.speakers) {
+      this.speakers.updateGains(gains)
     }
   }
 
@@ -390,27 +192,8 @@ export class TheaterScene {
    */
   updateSpeakerLevels(levels) {
     this.speakerLevels = levels
-    
-    for (const [spkId, db] of levels) {
-      const glow = this.speakerGlows.get(spkId)
-      const cube = this.speakerMeshes.get(spkId)
-      if (!glow || !cube) continue
-
-      // Convert dB to 0-1 intensity
-      const intensity = Math.max(0, Math.min(1, (db + 60) / 60))
-
-      glow.material.opacity = intensity * 0.3
-      glow.scale.setScalar(1 + intensity * 0.3)
-
-      const speaker = SPEAKERS.find(s => s.id === spkId)
-      if (speaker) {
-        const rgb = hexToRgb(speaker.color)
-        cube.material.emissive.setRGB(
-          rgb.r * intensity * 0.5,
-          rgb.g * intensity * 0.5,
-          rgb.b * intensity * 0.5
-        )
-      }
+    if (this.speakers) {
+      this.speakers.updateLevels(levels)
     }
   }
 
