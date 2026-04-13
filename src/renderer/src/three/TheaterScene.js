@@ -84,7 +84,7 @@ export class TheaterScene {
     // Build scene
     this.createRoom()
     this.createSpeakers()
-    this.createFloorGrid()
+    this.createRoomBoundaries()
 
     // Handle resize
     this._onResize = () => this.onResize()
@@ -111,11 +111,11 @@ export class TheaterScene {
 
     // Floor rectangle
     const floorGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-w, 0, -d),
-      new THREE.Vector3(w, 0, -d),
-      new THREE.Vector3(w, 0, d),
-      new THREE.Vector3(-w, 0, d),
-      new THREE.Vector3(-w, 0, -d)
+      new THREE.Vector3(-w, -1, -d),
+      new THREE.Vector3(w, -1, -d),
+      new THREE.Vector3(w, -1, d),
+      new THREE.Vector3(-w, -1, d),
+      new THREE.Vector3(-w, -1, -d)
     ])
     this.roomGroup.add(new THREE.Line(floorGeo, edgeMaterial))
 
@@ -133,7 +133,7 @@ export class TheaterScene {
     const corners = [[-w, -d], [w, -d], [w, d], [-w, d]]
     for (const [cx, cz] of corners) {
       const vGeo = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(cx, 0, cz),
+        new THREE.Vector3(cx, -1, cz),
         new THREE.Vector3(cx, h, cz)
       ])
       this.roomGroup.add(new THREE.Line(vGeo, edgeMaterial))
@@ -146,11 +146,12 @@ export class TheaterScene {
         color: 0x0a0a14,
         transparent: true,
         opacity: 0.6,
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        depthWrite: false
       })
     )
     floorPlane.rotation.x = -Math.PI / 2
-    floorPlane.position.y = -0.01
+    floorPlane.position.y = -1.01
     this.roomGroup.add(floorPlane)
 
     // Screen at the front
@@ -159,7 +160,8 @@ export class TheaterScene {
       color: 0x0d0d1a,
       transparent: true,
       opacity: 0.8,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
+      depthWrite: false
     })
     const screen = new THREE.Mesh(screenGeo, screenMat)
     screen.position.set(0, ROOM.height * 0.35, -ROOM.depth / 2 + 0.05)
@@ -178,19 +180,53 @@ export class TheaterScene {
   }
 
   /**
-   * Create floor grid
+   * Create room boundaries (grids)
    */
-  createFloorGrid() {
-    const gridHelper = new THREE.GridHelper(
-      Math.max(ROOM.width, ROOM.depth),
-      Math.max(ROOM.width, ROOM.depth) * 2,
-      0x111122,
-      0x0a0a14
-    )
-    gridHelper.position.y = 0.01
-    gridHelper.material.transparent = true
-    gridHelper.material.opacity = 0.3
-    this.scene.add(gridHelper)
+  createRoomBoundaries() {
+    const createGridPlane = (width, height, isFloor = false) => {
+      const geo = new THREE.PlaneGeometry(width, height, Math.floor(width * 2), Math.floor(height * 2))
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x111122,
+        wireframe: true,
+        transparent: true,
+        opacity: isFloor ? 0.3 : 0.15,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+      return new THREE.Mesh(geo, mat)
+    }
+
+    // Floor grid plane
+    const floorGrid = createGridPlane(ROOM.width, ROOM.depth, true)
+    floorGrid.rotation.x = -Math.PI / 2
+    floorGrid.position.y = -0.99
+    this.scene.add(floorGrid)
+
+    // Walls
+    const wallHeight = ROOM.height + 1 // from -1 to 3.5
+    const centerY = (ROOM.height - 1) / 2 // 1.25
+
+    // Back wall grid
+    const backGrid = createGridPlane(ROOM.width, wallHeight)
+    backGrid.position.set(0, centerY, -ROOM.depth / 2)
+    this.scene.add(backGrid)
+
+    // Front wall grid
+    const frontGrid = createGridPlane(ROOM.width, wallHeight)
+    frontGrid.position.set(0, centerY, ROOM.depth / 2)
+    this.scene.add(frontGrid)
+
+    // Left wall grid
+    const leftGrid = createGridPlane(ROOM.depth, wallHeight)
+    leftGrid.rotation.y = Math.PI / 2
+    leftGrid.position.set(-ROOM.width / 2, centerY, 0)
+    this.scene.add(leftGrid)
+
+    // Right wall grid
+    const rightGrid = createGridPlane(ROOM.depth, wallHeight)
+    rightGrid.rotation.y = -Math.PI / 2
+    rightGrid.position.set(ROOM.width / 2, centerY, 0)
+    this.scene.add(rightGrid)
   }
 
   /**
@@ -215,7 +251,8 @@ export class TheaterScene {
         metalness: 0.8,
         roughness: 0.2,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.5,
+        depthWrite: false
       })
       const cube = new THREE.Mesh(cubeGeo, cubeMat)
       // Shift LFE down so it sits flush on the grid
@@ -310,6 +347,7 @@ export class TheaterScene {
     const mesh = new THREE.Mesh(geo, mat)
     mesh.position.set(roomPos.x, roomPos.y, roomPos.z)
     mesh.scale.setScalar(size / 0.1)
+    mesh.renderOrder = 2
 
     this.scene.add(mesh)
     this.objectMeshes.set(obj.id, mesh)

@@ -36,11 +36,15 @@ export function speakerToCartesian(speaker, radius = ROOM.radius) {
   const azRad = (speaker.azimuth * Math.PI) / 180
   const elRad = (speaker.elevation * Math.PI) / 180
   
-  // Ear level is y = 1.2m. Floor is y = 0.
-  // We calculate standard spherical from listener and shift up.
+  // Ear level is y = 0. Floor is y = -1.
+  let yVal = radius * Math.sin(elRad)
+  if (speaker.id === 'LFE') {
+    yVal = -1 // Subwoofer on the ground
+  }
+
   return {
     x: radius * Math.cos(elRad) * Math.sin(azRad),
-    y: Math.max(0.1, 1.2 + radius * Math.sin(elRad)), // Ensure nothing goes below floor
+    y: Math.max(-1, yVal), // Ensure nothing goes below floor
     z:-radius * Math.cos(elRad) * Math.cos(azRad) // negative Z = forward
   }
 }
