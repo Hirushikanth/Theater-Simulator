@@ -29,6 +29,7 @@ export class AudioEngine {
 
     // Pre-allocated buffer to avoid GC churn at 60fps
     this.sharedBuffer = new Float32Array(2048)
+    this.levelsMap = new Map()
   }
 
   /**
@@ -315,11 +316,11 @@ export class AudioEngine {
   }
 
   getAllChannelLevels() {
-    const levels = new Map()
+    // Reuse the pre-allocated map
     for (const [id] of this.analysers) {
-      levels.set(id, this.getChannelLevel(id))
+      this.levelsMap.set(id, this.getChannelLevel(id))
     }
-    return levels
+    return this.levelsMap
   }
 
   startTimeUpdateLoop() {

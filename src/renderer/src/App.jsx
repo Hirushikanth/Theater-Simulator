@@ -288,10 +288,16 @@ export default function App() {
     if (!isPlaying && metadataParserRef.current) {
       const objs = metadataParserRef.current.getObjectsAtTime(time)
       setObjects(objs)
+
       if (objs.length > 0) {
         const gains = vbapRenderer.calculateSceneGains(objs)
         setSpeakerGains(gains)
         vuMeterEngine.setSpeakerGains(gains)
+      } else {
+        // Clear ghost glows if scrubbing to an empty section
+        const emptyGains = new Map()
+        setSpeakerGains(emptyGains)
+        vuMeterEngine.setSpeakerGains(emptyGains)
       }
     }
   }, [isPlaying])
