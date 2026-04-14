@@ -148,8 +148,8 @@ export class TheaterScene {
         this.activeMeshes.set(obj.id, mesh)
       }
 
-      // 2. Update mesh spatial properties
-      mesh.position.lerp(new THREE.Vector3(roomPos.x, roomPos.y, roomPos.z), 0.3)
+      // 2. Update mesh spatial properties (raw position, no smoothing)
+      mesh.position.set(roomPos.x, roomPos.y, roomPos.z)
 
       // 3. Update Colors based on elevation
       const color = objectColor(obj.z)

@@ -51,7 +51,7 @@ export default function MetadataPanel({ objects, metadataSource }) {
               const color = objectColor(obj.z || 0)
               const isActive = (obj.gain || 0) > 0.3
               return (
-                <div key={obj.id ?? i} className={`metadata-object ${isActive ? 'active' : ''}`}>
+                <div key={obj.id ?? `${obj.x?.toFixed(2)}-${obj.y?.toFixed(2)}-${obj.z?.toFixed(2)}`} className={`metadata-object ${isActive ? 'active' : ''}`}>
                   <div className="metadata-object-id" style={{ backgroundColor: color }}>
                     {obj.id ?? i}
                   </div>
