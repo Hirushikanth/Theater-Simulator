@@ -217,3 +217,18 @@ export async function cleanupTempDir(dirPath) {
     console.error('Failed to cleanup temp dir:', err)
   }
 }
+
+export async function cleanupAllTempDirs() {
+  const { readdir, rm } = require('fs/promises')
+  const osTmp = tmpdir()
+  try {
+    const files = await readdir(osTmp)
+    for (const file of files) {
+      if (file.startsWith('atmos-viz-') || file.startsWith('truehd-decode-')) {
+        await rm(join(osTmp, file), { recursive: true, force: true }).catch(() => {})
+      }
+    }
+  } catch (err) {
+    console.error('Failed to cleanup global temp dirs:', err)
+  }
+}

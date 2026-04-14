@@ -29,33 +29,32 @@ export default function App() {
   const [volume, setVolume] = useState(0.8)
   const [objects, setObjects] = useState([])
   const [speakerGains, setSpeakerGains] = useState(new Map())
-  const [metadataSource, setMetadataSource] = useState(null) // 'joc', 'adm', 'damf', 'synthetic', 'joc-encrypted', 'mat-encrypted', null
+  const [metadataSource, setMetadataSource] = useState(null)
   const [error, setError] = useState(null)
 
-  // Developer Toggle to re-enable the synthetic SpatialSimulator fallback
   const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
   const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
 
   const metadataParserRef = useRef(null)
   const rafRef = useRef(null)
+  
+  // Track the active temp dir so we don't delete it while playing!
+  const activeTempDirRef = useRef(null)
 
-  // Main visualization loop
   const updateLoop = useCallback(() => {
     if (!audioEngine.isPlaying) return
 
     const time = audioEngine.getCurrentTime()
     setCurrentTime(time)
 
-    // Get objects at current time from metadata parser
     if (metadataParserRef.current) {
       const objs = metadataParserRef.current.getObjectsAtTime(time)
       setObjects(objs)
 
-      // Calculate VBAP speaker gains from objects
       if (objs.length > 0) {
         const gains = vbapRenderer.calculateSceneGains(objs)
         setSpeakerGains(gains)
-        vuMeterEngine.setSpeakerGains(gains) // Forward vector gains to VU Engine
+        vuMeterEngine.setSpeakerGains(gains)
       }
     }
 
@@ -63,9 +62,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    audioEngine.onTimeUpdate = (time) => {
-      // Handled in RAF loop
-    }
     audioEngine.onEnded = () => {
       setIsPlaying(false)
       vuMeterEngine.stop()
@@ -75,10 +71,14 @@ export default function App() {
       audioEngine.destroy()
       vuMeterEngine.stop()
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      
+      // Final cleanup on component unmount
+      if (activeTempDirRef.current) {
+        window.atmosAPI.cleanupTemp(activeTempDirRef.current)
+      }
     }
   }, [])
 
-  // Handle file loading
   const handleFileOpen = useCallback(async () => {
     if (!window.atmosAPI) {
       setError('Native API not available. Please run as Electron app.')
@@ -101,7 +101,13 @@ export default function App() {
     try {
       setFileName(getFileName(filePath))
 
-      // Step 1: Analyze file with ffprobe
+      // Cleanup PREVIOUS temp directory before creating a new one
+      if (activeTempDirRef.current) {
+        await window.atmosAPI.cleanupTemp(activeTempDirRef.current)
+        activeTempDirRef.current = null
+      }
+
+      // Step 1: Analyze file
       const analysis = await window.atmosAPI.analyzeFile(filePath)
       if (analysis.error) throw new Error(analysis.error)
 
@@ -114,7 +120,7 @@ export default function App() {
         filePath
       })
 
-      // Step 2: Decode audio to PCM WAV
+      // Step 2: Decode audio to PCM WAV (Creates massive temp file)
       const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
         streamIndex: 0,
         channels: Math.min(audioStream.channels || 8, 12),
@@ -122,14 +128,21 @@ export default function App() {
       })
       if (decodeResult.error) throw new Error(decodeResult.error)
 
-      // Step 3: Load decoded audio
-      const audioData = await window.atmosAPI.readBinary(decodeResult.outputPath)
-      if (audioData.error) throw new Error(audioData.error)
+      // Mark this temp dir as active so we can delete it later
+      activeTempDirRef.current = decodeResult.outputDir
 
-      // FIX: Clean up the massive temp WAV file immediately after reading into RAM
-      window.atmosAPI.cleanupTemp(decodeResult.outputDir)
-
-      const loadResult = await audioEngine.loadAudio(audioData)
+      // Step 3: Stream the massive WAV file dynamically using custom protocol
+      // We use a fake hostname ('stream') and pass the path as a query parameter
+      // to prevent Chromium's media player from throwing "URL safety" errors.
+      const safePath = decodeResult.outputPath.replace(/\\/g, '/')
+      const streamUrl = `atmos://stream/?path=${encodeURIComponent(safePath)}`
+      
+      const loadResult = await audioEngine.loadAudio(
+        streamUrl, 
+        audioStream.channels || 8, 
+        audioStream.duration
+      )
+      
       setDuration(loadResult.duration)
       audioEngine.setVolume(volume)
 
@@ -142,8 +155,6 @@ export default function App() {
       } else if (getFileExtension(filePath) === '.wav') {
         await parseADMMetadata(filePath)
       } else if (audioStream.isTrueHD) {
-        // Aggressively attempt Atmos decoding for any TrueHD stream if professional decoder is enabled,
-        // because ffprobe often misses the Atmos profile in MAT 2.0 bitstreams.
         if (useProfessionalDecoder) {
           await parseTrueHDMetadata(filePath)
         } else if (audioStream.isAtmos) {
@@ -151,7 +162,7 @@ export default function App() {
         }
       }
 
-      // Step 5: Fallback to synthetic upmix simulator if no metadata found
+      // Step 5: Fallback
       if (!metadataParserRef.current && enableSyntheticUpmix) {
         metadataParserRef.current = new SpatialSimulator(audioEngine)
         setMetadataSource('synthetic')
@@ -163,12 +174,10 @@ export default function App() {
       setError(err.message)
       setIsLoading(false)
     }
-  }, [volume])
+  }, [volume, enableSyntheticUpmix, useProfessionalDecoder])
 
-  // Parse EAC3 JOC metadata
   const parseEAC3Metadata = async (filePath) => {
     try {
-      // Extract raw bitstream for metadata parsing
       const bsResult = await window.atmosAPI.extractBitstream(filePath, { streamIndex: 0 })
       if (bsResult.error) return
 
@@ -182,8 +191,6 @@ export default function App() {
         metadataParserRef.current = parser
         setMetadataSource('joc')
       } else if (result.isAtmos) {
-        // We know it has Atmos, but we stripped out the heuristic fakes,
-        // and we can't read the encrypted JOC natively yet.
         setMetadataSource('joc-encrypted')
       }
     } catch (err) {
@@ -191,7 +198,6 @@ export default function App() {
     }
   }
 
-  // Parse ADM BWF metadata
   const parseADMMetadata = async (filePath) => {
     try {
       const wavData = await window.atmosAPI.readBinary(filePath)
@@ -209,11 +215,9 @@ export default function App() {
     }
   }
 
-  // Parse TrueHD metadata using truehdd bridge and DAMFParser
   const parseTrueHDMetadata = async (filePath) => {
     try {
       setIsLoading(true)
-      // Decode with truehdd to get DAMF (audio + metadata)
       const result = await window.atmosAPI.decodeTrueHD(filePath, { presentation: 3, bedConform: true })
 
       if (result.error) {
@@ -229,10 +233,6 @@ export default function App() {
         if (parsed.hasDAMF && parsed.objects.length > 0) {
           metadataParserRef.current = parser
           setMetadataSource('damf')
-
-          // If we got a high-quality PCM audio file from truehdd, we could reload it.
-          // But for now, we keep the ffmpeg decode (fast) for audio and use truehdd for metadata.
-          // In the future, we could replace the audio engine source with result.audioPath.
         } else {
           setMetadataSource('mat-encrypted')
         }
@@ -247,7 +247,6 @@ export default function App() {
     }
   }
 
-  // Playback controls
   const handlePlay = useCallback(() => {
     if (isPlaying) {
       audioEngine.pause()
@@ -264,7 +263,6 @@ export default function App() {
 
   const handleStop = useCallback(() => {
     audioEngine.stop()
-    audioEngine.pauseTime = 0
     setIsPlaying(false)
     setCurrentTime(0)
     vuMeterEngine.stop()
@@ -282,7 +280,6 @@ export default function App() {
     audioEngine.setVolume(val)
   }, [])
 
-  // Drag and drop
   const handleDragOver = useCallback((e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -325,13 +322,11 @@ export default function App() {
 
   const handleToggleProfessional = useCallback((e) => {
     setUseProfessionalDecoder(e.target.checked)
-    // If we have a TrueHD file, we might want to re-load it to trigger the new decoder
     if (fileInfo && fileInfo.isTrueHD && fileInfo.isAtmos) {
       loadFile(fileInfo.filePath)
     }
   }, [fileInfo, loadFile])
 
-  // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT') return

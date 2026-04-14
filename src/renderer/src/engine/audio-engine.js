@@ -2,7 +2,7 @@
  * Audio Engine — Web Audio API graph with per-channel analysis
  *
  * Handles:
- * - Loading and playing decoded PCM WAV files
+ * - Streaming decoded PCM WAV files via HTML5 Audio
  * - Channel splitting for per-channel metering
  * - AnalyserNode per channel for real-time FFT/time-domain data
  * - Playback synchronization for visualization
@@ -13,15 +13,14 @@ import { SPEAKERS } from '../utils/constants'
 export class AudioEngine {
   constructor() {
     this.ctx = null
+    this.audioEl = null
     this.source = null
-    this.buffer = null
     this.splitter = null
     this.analysers = new Map()
     this.gainNodes = new Map()
     this.masterGain = null
+    
     this.isPlaying = false
-    this.startTime = 0
-    this.pauseTime = 0
     this.duration = 0
     this.channelCount = 0
     this.onTimeUpdate = null
@@ -43,35 +42,66 @@ export class AudioEngine {
   }
 
   /**
-   * Load a decoded WAV file
-   * @param {ArrayBuffer} audioData - PCM WAV data
+   * Load streaming audio via URL instead of RAM Buffer
+   * @param {string} url - The atmos:// URL mapped to the WAV file
+   * @param {number} knownChannelCount - Channels from ffprobe
+   * @param {number} knownDuration - Duration from ffprobe
    */
-  async loadAudio(audioData) {
+  async loadAudio(url, knownChannelCount, knownDuration) {
     await this.init()
     this.cleanupGraph()
     this.stop()
 
-    try {
-        this.buffer = await this.ctx.decodeAudioData(audioData.slice(0))
-      this.duration = this.buffer.duration
-      this.channelCount = this.buffer.numberOfChannels
+    this.channelCount = knownChannelCount || 8
+    this.duration = knownDuration || 0
 
-      this.setupGraph()
-      return {
-        duration: this.duration,
-        channelCount: this.channelCount,
-        sampleRate: this.buffer.sampleRate
-      }
-    } catch (err) {
-      console.error('Failed to decode audio:', err)
-      throw err
-    }
+    return new Promise((resolve, reject) => {
+      // Create hidden audio element for streaming from disk
+      this.audioEl = new Audio()
+      
+      this.audioEl.preload = "auto"
+      
+      this.audioEl.addEventListener('canplay', () => {
+        // Native element sometimes provides higher precision duration once loaded
+        if (this.audioEl.duration && isFinite(this.audioEl.duration)) {
+          this.duration = this.audioEl.duration
+        }
+        this.setupGraph()
+        resolve({
+          duration: this.duration,
+          channelCount: this.channelCount,
+          sampleRate: this.ctx.sampleRate
+        })
+      }, { once: true })
+
+      this.audioEl.addEventListener('error', (e) => {
+        console.error('Audio element error:', this.audioEl.error)
+        reject(new Error("Failed to stream audio file via custom protocol."))
+      })
+
+      this.audioEl.addEventListener('ended', () => {
+        this.isPlaying = false
+        if (this.onEnded) this.onEnded()
+      })
+
+      // Start streaming
+      this.audioEl.src = url
+    })
   }
 
   /**
    * Set up the Web Audio graph with per-channel analysis
    */
   setupGraph() {
+    // MediaElementSource can only be created once per element
+    this.source = this.ctx.createMediaElementSource(this.audioEl)
+    
+    // CRITICAL: Force the source node to preserve all discrete channels.
+    // Prevents the browser from downmixing the stream.
+    this.source.channelCount = this.channelCount
+    this.source.channelCountMode = 'explicit'
+    this.source.channelInterpretation = 'discrete'
+
     // Master gain
     this.masterGain = this.ctx.createGain()
     this.masterGain.gain.value = 1.0
@@ -79,16 +109,15 @@ export class AudioEngine {
 
     // Channel splitter
     this.splitter = this.ctx.createChannelSplitter(this.channelCount)
-    // CRITICAL: Prevent browser from automatically downmixing 7.1 to 5.1/Stereo
-    // based on OS speaker setup before splitting!
     this.splitter.channelCountMode = 'explicit'
     this.splitter.channelInterpretation = 'discrete'
 
-    // Create analyser for each channel
+    // Connect source to splitter
+    this.source.connect(this.splitter)
+
     this.analysers.clear()
     this.gainNodes.clear()
 
-    // Map channels to speaker IDs
     const channelMap = this.getChannelMap()
 
     for (let ch = 0; ch < this.channelCount; ch++) {
@@ -103,38 +132,32 @@ export class AudioEngine {
       const gainNode = this.ctx.createGain()
       gainNode.gain.value = 1.0
 
-      // Connect: splitter[ch] → analyser
       this.splitter.connect(analyser, ch)
       
-      // CRITICAL GARBAGE COLLECTION BUG FIX: Chrome suspends dead-end nodes!
-      // Wire the analyser cleanly into a 0.0 volume sink down to the master output.
+      // Prevent GC suspension of "dead-end" analysers
       const dummyGain = this.ctx.createGain()
       dummyGain.gain.value = 0.0
       analyser.connect(dummyGain)
       dummyGain.connect(this.masterGain)
 
-      // Connect splitter → gainNode → merger (playback tracking)
       this.splitter.connect(gainNode, ch)
 
       this.analysers.set(speakerId, analyser)
       this.gainNodes.set(speakerId, gainNode)
     }
 
-    // Also connect splitter directly to master for playback
-    // We use a merger to downmix if needed
+    // Downmix merger for local speakers
     const merger = this.ctx.createChannelMerger(Math.min(this.channelCount, 2))
     
-    // Simple stereo downmix for playback through local speakers
     if (this.channelCount >= 2) {
       const leftGain = this.ctx.createGain()
       const rightGain = this.ctx.createGain()
       leftGain.gain.value = 0.7
       rightGain.gain.value = 0.7
 
-      this.splitter.connect(leftGain, 0)   // FL
-      this.splitter.connect(rightGain, 1)   // FR
+      this.splitter.connect(leftGain, 0)
+      this.splitter.connect(rightGain, 1)
 
-      // Mix center to both
       if (this.channelCount > 2) {
         const centerL = this.ctx.createGain()
         const centerR = this.ctx.createGain()
@@ -146,7 +169,6 @@ export class AudioEngine {
         centerR.connect(merger, 0, 1)
       }
 
-      // Mix surrounds
       if (this.channelCount > 4) {
         const slGain = this.ctx.createGain()
         const srGain = this.ctx.createGain()
@@ -158,7 +180,6 @@ export class AudioEngine {
         srGain.connect(merger, 0, 1)
       }
 
-      // Mix surround backs
       if (this.channelCount > 6) {
         const sblGain = this.ctx.createGain()
         const sbrGain = this.ctx.createGain()
@@ -170,18 +191,15 @@ export class AudioEngine {
         sbrGain.connect(merger, 0, 1)
       }
 
-      // Mix heights
       if (this.channelCount > 8) {
         const heightLGain = this.ctx.createGain()
         const heightRGain = this.ctx.createGain()
         heightLGain.gain.value = 0.25
         heightRGain.gain.value = 0.25
         
-        // TFL(8), TRL(10)
         this.splitter.connect(heightLGain, 8)
         if (this.channelCount > 10) this.splitter.connect(heightLGain, 10)
         
-        // TFR(9), TRR(11)
         this.splitter.connect(heightRGain, 9)
         if (this.channelCount > 11) this.splitter.connect(heightRGain, 11)
 
@@ -196,9 +214,6 @@ export class AudioEngine {
     merger.connect(this.masterGain)
   }
 
-  /**
-   * Map channel indices to speaker IDs based on standard layouts
-   */
   getChannelMap() {
     const layouts = {
       2: ['FL', 'FR'],
@@ -212,28 +227,12 @@ export class AudioEngine {
   /**
    * Start playback
    */
-  play(fromTime = null) {
-    if (!this.buffer || !this.ctx) return
+  play() {
+    if (!this.audioEl || !this.ctx) return
+    if (this.ctx.state === 'suspended') this.ctx.resume()
 
-    this.stop()
-
-    this.source = this.ctx.createBufferSource()
-    this.source.buffer = this.buffer
-    this.source.channelCount = this.channelCount
-    this.source.channelCountMode = 'explicit'
-    this.source.channelInterpretation = 'discrete'
-    this.source.connect(this.splitter)
-    
-    this.source.onended = () => {
-      this.isPlaying = false
-      if (this.onEnded) this.onEnded()
-    }
-
-    const offset = fromTime !== null ? fromTime : this.pauseTime
-    this.startTime = this.ctx.currentTime - offset
-    this.source.start(0, offset)
+    this.audioEl.play()
     this.isPlaying = true
-
     this.startTimeUpdateLoop()
   }
 
@@ -241,20 +240,18 @@ export class AudioEngine {
    * Pause playback
    */
   pause() {
-    if (!this.isPlaying) return
-    this.pauseTime = this.getCurrentTime()
-    this.stop()
+    if (!this.audioEl) return
+    this.audioEl.pause()
+    this.isPlaying = false
   }
 
   /**
-   * Stop playback
+   * Stop playback completely
    */
   stop() {
-    if (this.source) {
-      this.source.onended = null // Safely remove listener to prevent seek race conditions
-      try { this.source.stop() } catch {}
-      this.source.disconnect()
-      this.source = null
+    if (this.audioEl) {
+      this.audioEl.pause()
+      this.audioEl.currentTime = 0
     }
     this.isPlaying = false
     this.stopTimeUpdateLoop()
@@ -264,10 +261,8 @@ export class AudioEngine {
    * Seek to a specific time
    */
   seek(time) {
-    const wasPlaying = this.isPlaying
-    this.pauseTime = Math.max(0, Math.min(time, this.duration))
-    if (wasPlaying) {
-      this.play(this.pauseTime)
+    if (this.audioEl) {
+      this.audioEl.currentTime = Math.max(0, Math.min(time, this.duration))
     }
   }
 
@@ -275,11 +270,8 @@ export class AudioEngine {
    * Get current playback time
    */
   getCurrentTime() {
-    if (!this.ctx) return 0
-    if (this.isPlaying) {
-      return Math.min(this.ctx.currentTime - this.startTime, this.duration)
-    }
-    return this.pauseTime
+    if (this.audioEl) return this.audioEl.currentTime
+    return 0
   }
 
   /**
@@ -291,10 +283,6 @@ export class AudioEngine {
     }
   }
 
-  /**
-   * Get time-domain data for a specific channel
-   * @returns {Float32Array}
-   */
   getTimeDomainData(speakerId) {
     const analyser = this.analysers.get(speakerId)
     if (!analyser) return new Float32Array(1024)
@@ -304,10 +292,6 @@ export class AudioEngine {
     return data
   }
 
-  /**
-   * Get frequency data for a specific channel
-   * @returns {Uint8Array}
-   */
   getFrequencyData(speakerId) {
     const analyser = this.analysers.get(speakerId)
     if (!analyser) return new Uint8Array(1024)
@@ -317,9 +301,6 @@ export class AudioEngine {
     return data
   }
 
-  /**
-   * Get RMS level for a channel (in dB)
-   */
   getChannelLevel(speakerId) {
     const data = this.getTimeDomainData(speakerId)
     let sum = 0
@@ -330,10 +311,6 @@ export class AudioEngine {
     return rms > 0 ? 20 * Math.log10(rms) : -100
   }
 
-  /**
-   * Get levels for all channels
-   * @returns {Map<string, number>} speakerId → dB level
-   */
   getAllChannelLevels() {
     const levels = new Map()
     for (const [id] of this.analysers) {
@@ -342,9 +319,6 @@ export class AudioEngine {
     return levels
   }
 
-  /**
-   * Time update loop for driving visualization
-   */
   startTimeUpdateLoop() {
     const update = () => {
       if (!this.isPlaying) return
@@ -363,10 +337,12 @@ export class AudioEngine {
     }
   }
 
-  /**
-   * Disconnect all nodes and clear maps to allow Garbage Collection
-   */
   cleanupGraph() {
+    if (this.source) {
+      try { this.source.disconnect() } catch {}
+      this.source = null
+    }
+
     if (this.splitter) {
       try { this.splitter.disconnect() } catch {}
       this.splitter = null
@@ -377,7 +353,6 @@ export class AudioEngine {
       this.masterGain = null
     }
 
-    // Explicitly disconnect all analysers and gains
     for (const analyser of this.analysers.values()) {
       try { analyser.disconnect() } catch {}
     }
@@ -387,16 +362,19 @@ export class AudioEngine {
 
     this.analysers.clear()
     this.gainNodes.clear()
+
+    if (this.audioEl) {
+      this.audioEl.pause()
+      this.audioEl.removeAttribute('src')
+      this.audioEl.load()
+      this.audioEl = null
+    }
   }
 
-  /**
-   * Cleanup
-   */
   destroy() {
     this.stop()
     this.cleanupGraph()
     if (this.ctx) {
-
       this.ctx.close()
       this.ctx = null
     }
