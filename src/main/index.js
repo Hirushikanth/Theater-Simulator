@@ -52,7 +52,7 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Updated protocol handler using URL searchParams
   protocol.handle('atmos', (request) => {
     try {
@@ -73,6 +73,9 @@ app.whenReady().then(() => {
       return new Response('Protocol Error', { status: 500 })
     }
   })
+
+  // Garbage collect any leftover temp files from crashed sessions
+  await cleanupAllTempDirs()
 
   setupIpcHandlers()
   createWindow()
