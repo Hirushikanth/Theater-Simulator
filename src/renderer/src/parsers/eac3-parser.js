@@ -965,21 +965,22 @@ export class EAC3Parser {
     if (!this._timelineCache) {
       this._timelineCache = new Map()
       for (const obj of this.objects) {
-        const t = Math.round(obj.timestamp * 100) / 100
-        if (!this._timelineCache.has(t)) this._timelineCache.set(t, [])
-        this._timelineCache.get(t).push(obj)
+        // FIXED: Convert to integer milliseconds for safe Map keys
+        const tMs = Math.round(obj.timestamp * 1000)
+        if (!this._timelineCache.has(tMs)) this._timelineCache.set(tMs, [])
+        this._timelineCache.get(tMs).push(obj)
       }
     }
 
-    const half = persistMs / 1000
     const result = new Map()
+    const timeMs = Math.round(time * 1000)
 
-    for (let c = Math.floor((time - half) * 100); c <= Math.ceil((time + half) * 100); c++) {
-      const t = c / 100
-      const objs = this._timelineCache.get(t)
+    // Lookup safely using integers
+    for (let c = timeMs - persistMs; c <= timeMs + persistMs; c++) {
+      const objs = this._timelineCache.get(c)
       if (objs) {
         for (const obj of objs) {
-          if (!result.has(obj.id) || t > result.get(obj.id).timestamp) {
+          if (!result.has(obj.id) || c > Math.round(result.get(obj.id).timestamp * 1000)) {
             result.set(obj.id, { ...obj })
           }
         }

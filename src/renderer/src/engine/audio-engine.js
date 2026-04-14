@@ -19,13 +19,16 @@ export class AudioEngine {
     this.analysers = new Map()
     this.gainNodes = new Map()
     this.masterGain = null
-    
+
     this.isPlaying = false
     this.duration = 0
     this.channelCount = 0
     this.onTimeUpdate = null
     this.onEnded = null
     this._rafId = null
+
+    // Pre-allocated buffer to avoid GC churn at 60fps
+    this.sharedBuffer = new Float32Array(2048)
   }
 
   /**
@@ -285,11 +288,11 @@ export class AudioEngine {
 
   getTimeDomainData(speakerId) {
     const analyser = this.analysers.get(speakerId)
-    if (!analyser) return new Float32Array(1024)
+    if (!analyser) return this.sharedBuffer.fill(0)
 
-    const data = new Float32Array(analyser.fftSize)
-    analyser.getFloatTimeDomainData(data)
-    return data
+    // Reuse the exact same memory array endlessly!
+    analyser.getFloatTimeDomainData(this.sharedBuffer)
+    return this.sharedBuffer
   }
 
   getFrequencyData(speakerId) {

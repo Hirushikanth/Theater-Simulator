@@ -162,11 +162,12 @@ export class DAMFParser {
   buildTimeline() {
     for (const obj of this.objects) {
       for (const pos of obj.positions) {
-        const t = Math.round(pos.time * 100) / 100
-        if (!this.timeline.has(t)) {
-          this.timeline.set(t, [])
+        // Use integer milliseconds for safe Map keys
+        const tMs = Math.round(pos.time * 1000)
+        if (!this.timeline.has(tMs)) {
+          this.timeline.set(tMs, [])
         }
-        this.timeline.set(t, [...this.timeline.get(t), {
+        this.timeline.set(tMs, [...this.timeline.get(tMs), {
           id: obj.id,
           name: obj.name,
           ...pos

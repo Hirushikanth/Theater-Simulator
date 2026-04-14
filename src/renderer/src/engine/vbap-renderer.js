@@ -39,6 +39,10 @@ export class VBAPRenderer {
         ])
       }
     })
+
+    // Pre-allocated output map to avoid GC churn at 60fps
+    this.outputGains = new Map()
+    SPEAKERS.forEach(s => this.outputGains.set(s.id, 0))
   }
 
   /**
@@ -218,19 +222,19 @@ export class VBAPRenderer {
    * Returns aggregated gains per speaker
    */
   calculateSceneGains(objects) {
-    const aggregated = new Map()
-    SPEAKERS.forEach(s => aggregated.set(s.id, 0))
+    // Zero out the existing map instead of making a new one
+    SPEAKERS.forEach(s => this.outputGains.set(s.id, 0))
 
     for (const obj of objects) {
       const objGains = this.calculateGains(obj.x, obj.y, obj.z)
       const objWeight = obj.gain ?? 1.0
 
       for (const [spkId, gain] of objGains) {
-        const current = aggregated.get(spkId) || 0
-        aggregated.set(spkId, Math.min(1, current + gain * objWeight))
+        const current = this.outputGains.get(spkId) || 0
+        this.outputGains.set(spkId, Math.min(1, current + gain * objWeight))
       }
     }
 
-    return aggregated
+    return this.outputGains
   }
 }

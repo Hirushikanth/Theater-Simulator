@@ -37,6 +37,7 @@ export default function App() {
 
   const metadataParserRef = useRef(null)
   const rafRef = useRef(null)
+  const lastTimeUpdate = useRef(0)
   
   // Track the active temp dir so we don't delete it while playing!
   const activeTempDirRef = useRef(null)
@@ -45,7 +46,12 @@ export default function App() {
     if (!audioEngine.isPlaying) return
 
     const time = audioEngine.getCurrentTime()
-    setCurrentTime(time)
+
+    // THROTTLE REACT STATE TO 4 FPS (Saves massive CPU overhead)
+    if (time - lastTimeUpdate.current > 0.25) {
+      setCurrentTime(time)
+      lastTimeUpdate.current = time
+    }
 
     if (metadataParserRef.current) {
       const objs = metadataParserRef.current.getObjectsAtTime(time)
@@ -96,7 +102,10 @@ export default function App() {
     setError(null)
     setObjects([])
     setMetadataSource(null)
+    setCurrentTime(0)
+    setSpeakerGains(new Map())
     metadataParserRef.current = null
+    lastTimeUpdate.current = 0
 
     try {
       setFileName(getFileName(filePath))
@@ -273,7 +282,19 @@ export default function App() {
   const handleSeek = useCallback((time) => {
     audioEngine.seek(time)
     setCurrentTime(time)
-  }, [])
+    lastTimeUpdate.current = time  // Reset throttle so UI updates immediately
+
+    // Force a one-off update for the visualizer while paused
+    if (!isPlaying && metadataParserRef.current) {
+      const objs = metadataParserRef.current.getObjectsAtTime(time)
+      setObjects(objs)
+      if (objs.length > 0) {
+        const gains = vbapRenderer.calculateSceneGains(objs)
+        setSpeakerGains(gains)
+        vuMeterEngine.setSpeakerGains(gains)
+      }
+    }
+  }, [isPlaying])
 
   const handleVolumeChange = useCallback((val) => {
     setVolume(val)
