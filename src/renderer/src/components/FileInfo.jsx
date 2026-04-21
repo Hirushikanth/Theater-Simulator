@@ -80,7 +80,8 @@ export default function FileInfo({ fileInfo, metadataSource, error }) {
                  metadataSource === 'joc-encrypted' ? 'E-AC-3 (Parse Fallback)' :
                  metadataSource === 'mat-encrypted' ? 'TrueHD MAT (Parse Fallback)' :
                  metadataSource === 'adm' ? 'ADM XML' :
-                 metadataSource === 'damf' ? 'DAMF YAML' : 
+                 metadataSource === 'damf' ? 'DAMF (TrueHD Decoded)' :
+                 metadataSource === 'damf-standalone' ? 'DAMF (Standalone)' :
                  metadataSource === 'synthetic' ? 'SYNTHETIC UPMIX' : 'Unknown'}
               </span>
             </>

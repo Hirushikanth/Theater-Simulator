@@ -39,8 +39,8 @@ export default function App() {
   const rafRef = useRef(null)
   const lastTimeUpdate = useRef(0)
   
-  // Track the active temp dir so we don't delete it while playing!
-  const activeTempDirRef = useRef(null)
+  // Track the active temp dirs so we don't delete them while playing!
+  const activeTempDirsRef = useRef([])
 
   const updateLoop = useCallback(() => {
     if (!audioEngine.isPlaying) return
@@ -79,11 +79,30 @@ export default function App() {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       
       // Final cleanup on component unmount
-      if (activeTempDirRef.current) {
-        window.atmosAPI.cleanupTemp(activeTempDirRef.current)
+      for (const dir of activeTempDirsRef.current) {
+        window.atmosAPI.cleanupTemp(dir)
       }
     }
   }, [])
+
+  /**
+   * Track a temp directory for cleanup later
+   */
+  const trackTempDir = (dir) => {
+    if (dir && !activeTempDirsRef.current.includes(dir)) {
+      activeTempDirsRef.current.push(dir)
+    }
+  }
+
+  /**
+   * Cleanup all tracked temp directories
+   */
+  const cleanupTrackedDirs = async () => {
+    for (const dir of activeTempDirsRef.current) {
+      await window.atmosAPI.cleanupTemp(dir)
+    }
+    activeTempDirsRef.current = []
+  }
 
   const handleFileOpen = useCallback(async () => {
     if (!window.atmosAPI) {
@@ -110,71 +129,18 @@ export default function App() {
     try {
       setFileName(getFileName(filePath))
 
-      // Cleanup PREVIOUS temp directory before creating a new one
-      if (activeTempDirRef.current) {
-        await window.atmosAPI.cleanupTemp(activeTempDirRef.current)
-        activeTempDirRef.current = null
-      }
+      // Cleanup PREVIOUS temp directories before creating new ones
+      await cleanupTrackedDirs()
 
-      // Step 1: Analyze file
-      const analysis = await window.atmosAPI.analyzeFile(filePath)
-      if (analysis.error) throw new Error(analysis.error)
+      const ext = getFileExtension(filePath)
 
-      const audioStream = analysis.audioStreams?.[0]
-      if (!audioStream) throw new Error('No audio stream found')
-
-      setFileInfo({
-        ...audioStream,
-        format: analysis.format?.format_name || 'unknown',
-        filePath
-      })
-
-      // Step 2: Decode audio to PCM WAV (Creates massive temp file)
-      const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
-        streamIndex: 0,
-        channels: Math.min(audioStream.channels || 8, 12),
-        sampleRate: audioStream.sampleRate || 48000
-      })
-      if (decodeResult.error) throw new Error(decodeResult.error)
-
-      // Mark this temp dir as active so we can delete it later
-      activeTempDirRef.current = decodeResult.outputDir
-
-      // Step 3: Stream the massive WAV file dynamically using custom protocol
-      // We use a fake hostname ('stream') and pass the path as a query parameter
-      // to prevent Chromium's media player from throwing "URL safety" errors.
-      const safePath = decodeResult.outputPath.replace(/\\/g, '/')
-      const streamUrl = `atmos://stream/?path=${encodeURIComponent(safePath)}`
-      
-      const loadResult = await audioEngine.loadAudio(
-        streamUrl, 
-        audioStream.channels || 8, 
-        audioStream.duration
-      )
-      
-      setDuration(loadResult.duration)
-      audioEngine.setVolume(volume)
-
-      // Step 4: Parse metadata based on codec type
-      if (audioStream.isEAC3 || audioStream.isAC3) {
-        await parseEAC3Metadata(filePath)
-        if (!metadataParserRef.current && audioStream.isAtmos) {
-          setMetadataSource('joc-encrypted')
-        }
-      } else if (getFileExtension(filePath) === '.wav') {
-        await parseADMMetadata(filePath)
-      } else if (audioStream.isTrueHD) {
-        if (useProfessionalDecoder) {
-          await parseTrueHDMetadata(filePath)
-        } else if (audioStream.isAtmos) {
-          setMetadataSource('mat-encrypted')
-        }
-      }
-
-      // Step 5: Fallback
-      if (!metadataParserRef.current && enableSyntheticUpmix) {
-        metadataParserRef.current = new SpatialSimulator(audioEngine)
-        setMetadataSource('synthetic')
+      // Route based on file extension
+      if (ext === '.atmos') {
+        // Standalone .atmos file — DAMF root file with companion files
+        await loadAtmosStandalone(filePath)
+      } else {
+        // Container or raw file — analyze with ffprobe first
+        await loadAnalyzedFile(filePath, ext)
       }
 
       setIsLoading(false)
@@ -184,6 +150,230 @@ export default function App() {
       setIsLoading(false)
     }
   }, [volume, enableSyntheticUpmix, useProfessionalDecoder])
+
+  /**
+   * Load a standalone .atmos file (DAMF root).
+   * Looks for companion .atmos.metadata and .atmos.audio files.
+   */
+  const loadAtmosStandalone = async (filePath) => {
+    try {
+      // The .atmos file is the root; companion files share the same prefix
+      // e.g., myfile.atmos, myfile.atmos.metadata, myfile.atmos.audio
+      const metadataPath = `${filePath}.metadata`
+      const audioPath = `${filePath}.audio`
+
+      // Read root file
+      const rootContent = await window.atmosAPI.readText(filePath)
+      if (!rootContent || rootContent.error) {
+        throw new Error('Failed to read .atmos root file')
+      }
+
+      // Read metadata file
+      const metadataContent = await window.atmosAPI.readText(metadataPath)
+      if (!metadataContent || metadataContent.error) {
+        throw new Error('Companion .atmos.metadata file not found')
+      }
+
+      // Parse DAMF
+      const parser = new DAMFParser()
+      const result = parser.parse(rootContent, metadataContent)
+
+      if (result.hasDAMF && result.objects.length > 0) {
+        metadataParserRef.current = parser
+        setMetadataSource('damf-standalone')
+
+        setFileInfo({
+          codec: 'damf',
+          codecLong: 'Dolby Atmos Master Format',
+          channels: parser.beds.length + parser.objects.length,
+          channelLayout: `${parser.beds.length} beds + ${parser.objects.length} objects`,
+          sampleRate: parser.sampleRate,
+          bitRate: 0,
+          duration: parser.duration,
+          isAtmos: true,
+          format: 'DAMF',
+          filePath
+        })
+
+        setDuration(parser.duration)
+      } else {
+        throw new Error('No Atmos object metadata found in .atmos files')
+      }
+
+      // Audio note: the companion .atmos.audio is a CAF file with all discrete
+      // channels (beds + objects = 92+ ch). FFmpeg can't rematrix this and our
+      // binary WAV extractor only handles RIFF/RF64 format, not CAF.
+      // Visualization from DAMF metadata works perfectly without audio.
+      // TODO: implement CAF binary channel extraction for audio playback.
+      console.log('[DAMF standalone] Audio playback not yet supported for multi-channel CAF. Visualization only.')
+    } catch (err) {
+      console.error('Standalone .atmos load error:', err)
+      throw err
+    }
+  }
+
+  /**
+   * Standard load path: analyze with ffprobe, then route by codec.
+   */
+  const loadAnalyzedFile = async (filePath, ext) => {
+    // Step 1: Analyze file
+    const analysis = await window.atmosAPI.analyzeFile(filePath)
+    if (analysis.error) throw new Error(analysis.error)
+
+    const audioStream = analysis.audioStreams?.[0]
+    if (!audioStream) throw new Error('No audio stream found')
+
+    setFileInfo({
+      ...audioStream,
+      format: analysis.format?.format_name || 'unknown',
+      filePath
+    })
+
+    // Step 2: Determine codec pipeline
+    const isTrueHD = audioStream.isTrueHD
+    const isEAC3 = audioStream.isEAC3 || audioStream.isAC3
+    // All WAV files are candidates for ADM — the axml chunk check is cheap
+    const isADM = ext === '.wav'
+
+    // Step 3: Decode audio for playback
+    let audioUrl = null
+
+    if (isTrueHD && useProfessionalDecoder) {
+      // TrueHD: truehdd for metadata, FFmpeg fallback in Step 3b for audio
+      audioUrl = await decodeTrueHDFull(filePath, audioStream)
+    } else if (!isADM) {
+      // Non-ADM formats: FFmpeg standard decode (8ch cap for browser compat)
+      // ADM .wav files are handled in Step 3b via extractWavChannels (no FFmpeg ch limit)
+      const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
+        streamIndex: 0,
+        channels: Math.min(audioStream.channels || 8, 8),
+        sampleRate: audioStream.sampleRate || 48000,
+        sourceChannels: audioStream.channels || 8
+      })
+      if (decodeResult.error) throw new Error(decodeResult.error)
+
+      trackTempDir(decodeResult.outputDir)
+      const safePath = decodeResult.outputPath.replace(/\\/g, '/')
+      audioUrl = `atmos://stream/?path=${encodeURIComponent(safePath)}`
+    }
+
+    // Step 3b: No audio URL yet — decode for playback
+    // ADM BWF WAV: use direct binary channel extraction (bypasses FFmpeg 64ch pan limit)
+    // All other formats: FFmpeg decode
+    if (!audioUrl) {
+      let decodeResult
+
+      if (isADM) {
+        // Direct binary extraction — works for 92, 118, any channel count
+        decodeResult = await window.atmosAPI.extractWavChannels(filePath, { outChannels: 8 })
+      } else {
+        decodeResult = await window.atmosAPI.decodeAudio(filePath, {
+          streamIndex: 0,
+          channels: Math.min(audioStream.channels || 8, 8),
+          sampleRate: audioStream.sampleRate || 48000,
+          sourceChannels: audioStream.channels || 8
+        })
+      }
+
+      if (decodeResult && !decodeResult.error) {
+        trackTempDir(decodeResult.outputDir)
+        const safePath = decodeResult.outputPath.replace(/\\/g, '/')
+        audioUrl = `atmos://stream/?path=${encodeURIComponent(safePath)}`
+      }
+    }
+
+    // Step 4: Load audio into engine
+    // Always seed duration from ffprobe — will be overridden once audio canplay fires
+    setDuration(audioStream.duration || 0)
+
+    if (audioUrl) {
+      const loadResult = await audioEngine.loadAudio(
+        audioUrl,
+        Math.min(audioStream.channels || 8, 8),
+        audioStream.duration
+      )
+      setDuration(loadResult.duration)
+      audioEngine.setVolume(volume)
+    }
+
+    // Step 5: Parse metadata (unless TrueHD already did it in step 3)
+    if (!metadataParserRef.current) {
+      if (isEAC3) {
+        await parseEAC3Metadata(filePath)
+        if (!metadataParserRef.current && audioStream.isAtmos) {
+          setMetadataSource('joc-encrypted')
+        }
+      } else if (isADM) {
+        await parseADMMetadata(filePath)
+      } else if (isTrueHD && !useProfessionalDecoder) {
+        if (audioStream.isAtmos) {
+          setMetadataSource('mat-encrypted')
+        }
+      }
+    }
+
+    // Step 6: Fallback
+    if (!metadataParserRef.current && enableSyntheticUpmix) {
+      metadataParserRef.current = new SpatialSimulator(audioEngine)
+      setMetadataSource('synthetic')
+    }
+  }
+
+  /**
+   * Full TrueHD pipeline: truehdd for DAMF metadata, FFmpeg for audio.
+   *
+   * Architecture:
+   *   - truehdd → .atmos.metadata → DAMF parser → object position visualization
+   *   - FFmpeg → original file → standard 7.1 PCM → browser playback
+   *
+   * We do NOT use truehdd's CAF audio for playback. It has 25 discrete channels
+   * with non-standard layout that causes FFmpeg rematrix failures. FFmpeg decodes
+   * the original TrueHD container reliably to a clean 7.1 WAV.
+   *
+   * Returns null so loadAnalyzedFile falls through to its FFmpeg audio path (Step 4).
+   */
+  const decodeTrueHDFull = async (filePath, audioStream) => {
+    try {
+      const result = await window.atmosAPI.decodeTrueHD(filePath, {
+        presentation: 3,
+        bedConform: true,
+        streamIndex: 0
+      })
+
+      if (result.error) {
+        console.warn('truehdd decode error:', result.error)
+        setMetadataSource('mat-encrypted')
+        return null
+      }
+
+      // Track temp dirs for cleanup (metadata files, bitstream extraction)
+      trackTempDir(result.outputDir)
+      if (result.wavDir) trackTempDir(result.wavDir)
+
+      // Parse DAMF metadata — this is the sole purpose of truehdd here
+      if (result.metadataContent) {
+        const parser = new DAMFParser()
+        const parsed = parser.parse(result.rootContent, result.metadataContent)
+
+        if (parsed.hasDAMF && parsed.objects.length > 0) {
+          metadataParserRef.current = parser
+          setMetadataSource('damf')
+          console.log(`[TrueHD] DAMF parsed: ${parsed.objects.length} objects, ${parsed.beds.length} beds`)
+        } else {
+          setMetadataSource('mat-encrypted')
+        }
+      } else {
+        setMetadataSource('mat-encrypted')
+      }
+
+      // Return null — let loadAnalyzedFile handle audio via FFmpeg (Step 4 below)
+      return null
+    } catch (err) {
+      console.warn('TrueHD full decode failed:', err)
+      setMetadataSource('mat-encrypted')
+      return null
+    }
+  }
 
   const parseEAC3Metadata = async (filePath) => {
     try {
@@ -209,50 +399,34 @@ export default function App() {
 
   const parseADMMetadata = async (filePath) => {
     try {
+      // Use efficient axml-only reading instead of loading entire file
+      const xmlString = await window.atmosAPI.readAXMLChunk(filePath)
+
+      if (xmlString && !xmlString.error) {
+        const parser = new ADMParser()
+        const result = parser.parseFromXml(xmlString)
+
+        if (result.hasADM && result.objects.length > 0) {
+          metadataParserRef.current = parser
+          setMetadataSource('adm')
+          console.log(`[ADM] Parsed: ${result.objects.length} objects`)
+          return
+        }
+      }
+
+      // Fallback: try loading the full file (for small files or non-standard containers)
       const wavData = await window.atmosAPI.readBinary(filePath)
-      if (wavData.error) return
+      if (wavData && !wavData.error) {
+        const parser = new ADMParser()
+        const result = parser.parse(wavData)
 
-      const parser = new ADMParser()
-      const result = parser.parse(wavData)
-
-      if (result.hasADM && result.objects.length > 0) {
-        metadataParserRef.current = parser
-        setMetadataSource('adm')
+        if (result.hasADM && result.objects.length > 0) {
+          metadataParserRef.current = parser
+          setMetadataSource('adm')
+        }
       }
     } catch (err) {
       console.warn('ADM parse failed:', err)
-    }
-  }
-
-  const parseTrueHDMetadata = async (filePath) => {
-    try {
-      setIsLoading(true)
-      const result = await window.atmosAPI.decodeTrueHD(filePath, { presentation: 3, bedConform: true })
-
-      if (result.error) {
-        console.warn('truehdd decode error:', result.error)
-        setMetadataSource('mat-encrypted')
-        return
-      }
-
-      if (result.metadataContent) {
-        const parser = new DAMFParser()
-        const parsed = parser.parse(result.metadataContent)
-
-        if (parsed.hasDAMF && parsed.objects.length > 0) {
-          metadataParserRef.current = parser
-          setMetadataSource('damf')
-        } else {
-          setMetadataSource('mat-encrypted')
-        }
-      } else {
-        setMetadataSource('mat-encrypted')
-      }
-    } catch (err) {
-      console.warn('TrueHD metadata parse failed:', err)
-      setMetadataSource('mat-encrypted')
-    } finally {
-      setIsLoading(false)
     }
   }
 

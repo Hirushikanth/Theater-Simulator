@@ -1,37 +1,58 @@
-# Atmos Theater Visualizer 🚀
+# Atmos Theater Visualizer 🎬
 
-**Atmos Theater Visualizer** is a high-fidelity, Electron-based desktop application designed to simulate and visualize 7.1.4 Dolby Atmos spatial audio environments in real-time. 
+**Atmos Theater Visualizer** is a professional-grade, Electron-based desktop application for real-time decoding, parsing, and 3D spatial visualization of Dolby Atmos audio across all major formats — including native TrueHD DAMF, ADM BWF, and E-AC-3 JOC streams.
 
 > [!IMPORTANT]
 > **LEGAL NOTICE & USAGE:** This is an **unofficial** Dolby Atmos object viewer developed strictly for **educational and individual use**. It is not affiliated with, endorsed by, or licensed by Dolby Laboratories.
 
 ### 🤖 AI-Assisted Development
-This project was developed with significant **AI assistance (Antigravity by Google DeepMind)** to engineer the complex spatial math, bitstream parsing heuristics, and the 3D WebGL rendering engine.
+This project was developed with significant **AI assistance (Antigravity by Google DeepMind)** to engineer the complex spatial math, bitstream parsing heuristics, binary format extraction, and the 3D WebGL rendering engine.
 
 ---
 
 ## ✨ Key Features
-- **Real-Time 3D Visualization:** A stunning Three.js-powered home theater environment with dynamic object spheres and speaker glow indicators.
-- **Professional Atmos Decoding:** Integrated with the Rust-based **[truehdd](https://github.com/truehdd/truehdd)** decoder for high-fidelity extraction of OAMD metadata from TrueHD/MAT 2.0 bitstreams.
-- **Advanced Spatial Panning (VBAP):** Implements **Vector Base Amplitude Panning** to calculate precise speaker gains based on 3D object trajectories.
-- **Native Audio Pipeline:** Uses bundled **FFmpeg** and **ffprobe** for high-performance audio decoding (E-AC-3, AC-3, TrueHD, ADM BWF) directly on your desktop.
-- **Dynamic Metadata Parsing:** 
-  - **Native E-AC-3 JOC:** A custom-built bit-level protocol decoder that extracts exact Object Audio Metadata (OAMD) natively from Dolby Digital Plus Atmos streams—calculating dynamic spatial keyframes flawlessly!
-  - **ADM BWF:** Full ITU-R BS.2076 XML metadata parsing.
-  - **DAMF:** Support for `.atmos.metadata` YAML trajectories.
-- **Synthetic Upmix Engine:** A fallback spatializer that generates audio-reactive virtual objects when proprietary MAT metadata is un-parsable, ensuring the 7.1.4 array always remains visually active.
-- **Premium Glassmorphic UI:** A professional-grade dashboard with 12-channel high-resolution VU metering and real-time object tracking.
+
+- **Real-Time 3D Theater Visualization:** A stunning Three.js-powered home theater with dynamic object spheres, trajectory trails, and per-speaker glow indicators — updated at 60 FPS.
+- **Professional TrueHD Atmos Decoding:** Full end-to-end pipeline using the Rust-based **[truehdd](https://github.com/truehdd/truehdd)** decoder:
+  - Auto-detects and extracts raw `.thd` bitstreams from MKV/MKA containers via FFmpeg
+  - Decodes to **DAMF** (Dolby Atmos Master Format): `.atmos` root + `.atmos.metadata` events
+  - Parses all object trajectories with frame-accurate binary-search interpolation
+  - FFmpeg provides the 7.1 playback audio from the original container
+- **Native ADM BWF Support (up to 118+ channels):**
+  - Efficiently reads **only** the `axml` RIFF chunk for XML metadata (avoids loading multi-GB audio into RAM)
+  - Proper ADM reference chain resolution: `audioObject → audioPackFormat → audioChannelFormat → audioBlockFormat`
+  - **Direct binary WAV/BW64 channel extraction** (no FFmpeg): overcomes the FFmpeg `pan` filter 64-channel hard limit for high-channel-count master files
+  - Supports **RIFF** (≤4 GB) and **RF64/BW64** (>4 GB) formats, 16/24/32-bit PCM
+- **Native E-AC-3 JOC Parser:** Custom bit-level protocol decoder for Dolby Digital Plus Atmos streams. Extracts OAMD spatial keyframes natively from `.eac3`, `.mp4`, `.mkv`.
+- **DAMF Standalone Support:** Opens `.atmos` root files with companion `.atmos.metadata` — visualizes up to 80+ dynamic object trajectories.
+- **Advanced Spatial Panning (VBAP):** Vector Base Amplitude Panning for precise per-speaker gain calculation from 3D object positions.
+- **12-Channel VU Metering:** Real-time high-resolution level metering across the full 7.1.4 speaker array.
+- **Synthetic Upmix Fallback:** Audio-reactive virtual objects for files where proprietary metadata is inaccessible (optional, can be disabled).
+- **Premium Glassmorphic UI:** Professional dashboard with dark-mode design, real-time object metadata panel, and stream info sidebar.
+
+---
+
+## 📂 Supported Formats
+
+| Format | Metadata Source | Audio |
+|---|---|---|
+| TrueHD / MKV, MKA | DAMF (truehdd decoded) | FFmpeg 7.1 from container |
+| E-AC-3 JOC / MP4, MKV, .eac3 | Native JOC OAMD parser | FFmpeg decode |
+| ADM BWF / .wav (≤118ch, BW64) | ADM XML (axml chunk) | Binary WAV extractor |
+| Standalone `.atmos` | DAMF (direct file) | Visualization only |
+| PCM / WAV | None | Direct playback |
 
 ---
 
 ## 🛠️ Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
-- [npm](https://www.npmjs.com/) (usually comes with Node.js)
-- [Rust & Cargo](https://rustup.rs/) (Required for the Professional Atmos Decoder)
+- [Node.js](https://nodejs.org/) (v18 or higher)
+- [npm](https://www.npmjs.com/)
+- [Rust & Cargo](https://rustup.rs/) — required for the Professional TrueHD Decoder
 
 ### Installation & Setup
+
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/Hirushikanth/Theater-Simulator.git
@@ -43,17 +64,19 @@ This project was developed with significant **AI assistance (Antigravity by Goog
    npm install
    ```
 
-3. **Provide Professional Decoder (Optional but Recommended):**
-   The application uses `truehdd` for professional-grade Atmos decoding. To set it up:
+3. **Build & install the Professional TrueHD Decoder (Recommended):**
+
+   The application uses `truehdd` for native TrueHD Atmos DAMF extraction. Without it, TrueHD files will show a MAT-Encrypted fallback (no object visualization).
+
    ```bash
-   # Clone the truehdd repository
+   # Clone truehdd
    git clone https://github.com/truehdd/truehdd
    cd truehdd
-   
+
    # Build the release binary
    cargo build --release
-   
-   # Copy the binary to the project's bin folder
+
+   # Copy binary to the project's bin folder
    mkdir -p ../Theater-Simulator/bin
    cp target/release/truehdd ../Theater-Simulator/bin/
    ```
@@ -70,36 +93,75 @@ This project was developed with significant **AI assistance (Antigravity by Goog
 
 ---
 
-## 🏛️ Credits & Acknowledgements
-- **[Cavern](https://github.com/VoidXH/Cavern)**: Monumental open-source research and reverse-engineering of the Dolby E-AC-3 JOC bit-level protocols, directly enabling our native Javascript parser.
-- **[truehdd](https://github.com/truehdd/truehdd)**: The core engine for professional-grade TrueHD/Atmos OAMD extraction.
-- **Google DeepMind (Antigravity)**: AI-assisted engineering for spatial math and bitstream parsing.
-- **Three.js**: The powerful 3D engine driving the theater visualization.
-
----
-
-## 🔊 Native E-AC-3 JOC Support
-The Theater Simulator formally features a **completely native bitstream parser for E-AC-3 JOC files**! 
-This means any standard Dolby Digital Plus Atmos file (`.eac3`, `.mp4`, `.mkv`) generated from streaming platforms properly parses through our bespoke `eac3-parser`. We read every single dependent substream and map the 3D differential position data (OAMD) directly into the Three.js physics sandbox!
-
-## ⚠️ Metadata Limitations & Synthetic Engine
-While E-AC-3, ADM BWF, and DAMF provide breathtaking native spatial paths, it is important to note:
-- **TrueHD MAT 2.0 Complexity:** Currently, parsing native TrueHD Atmos relies heavily on the `truehdd` binary decoder, and some proprietary TrueHD payloads might trigger a **Parse Fallback** if they contain un-supported MAT multiplexing states.
-- **Synthetic Visualization:** To ensure the 3D theater remains dynamic when encountering files that trigger a Parse Fallback, the app auto-engages a **Synthetic Object Engine**. This generates audio-reactive virtual objects that synthesize spatial movement based on frequency energy—providing a stunning visual representation of the soundstage even when true metadata is locked.
-
----
-
-## 📂 Supported Formats
-- **Codecs:** E-AC-3 (JOC), AC-3, TrueHD (MAT 2.0), ADM BWF (WAV), PCM.
-- **Containers:** .mkv, .mp4, .m4a, .mov, .webm, .wav, .eac3.
-
----
-
 ## 🖱️ How to Use
-1. **Launch the App.**
-2. **Enable Professional Decoder** in the top bar (if you have provided the `truehdd` binary).
-3. **Drop a file** (like a TrueHD Atmos MKV) into the theater.
-4. **Decoding Progress:** Watch the terminal/console for real-time `truehdd` progress logs.
-5. **Hit Play:** Experience the high-fidelity spatial trajectories!
+
+1. **Launch the App** (`npm run dev`)
+2. **Enable Professional Decoder** in the top bar (requires `bin/truehdd` binary)
+3. **Click Open File** — supported formats are listed above
+4. **Watch the terminal** for real-time decode progress (truehdd frame count, wav-extract stats, etc.)
+5. **Hit Play** and watch the Atmos objects move through the 3D theater in sync with the audio
+
+> **Tip:** Objects activate a few seconds into TrueHD content — this reflects the real DAMF event timeline where objects start inactive and transition to active positions.
 
 ---
+
+## 🏗️ Architecture
+
+```
+File Opened
+├── .atmos  → loadAtmosStandalone()
+│               └── DAMFParser (root + .atmos.metadata)
+│
+└── Other   → analyzeFile (ffprobe)
+              ├── TrueHD + Professional Decoder
+              │     ├── FFmpeg extracts raw .thd from container
+              │     ├── truehdd decodes → DAMF files
+              │     ├── DAMFParser → object trajectories
+              │     └── FFmpeg decodes original container → 7.1 WAV (playback)
+              │
+              ├── E-AC-3 / AC-3
+              │     ├── FFmpeg → PCM WAV (playback)
+              │     └── JOC OAMD parser → object positions
+              │
+              └── WAV (ADM BWF)
+                    ├── readAXMLChunk → ADM XML parser → object positions
+                    └── extractWavChannels → first 8ch binary extract → playback
+```
+
+**Key design decisions:**
+- **Audio and metadata are decoupled** for TrueHD: truehdd handles metadata, FFmpeg handles audio. This avoids complex multi-channel CAF rematrix issues.
+- **ADM audio bypasses FFmpeg entirely**: the bundled `wav-extract.js` copies PCM frames at the binary level — no channel limit, no codec conversion, no quality loss for the first 8 channels.
+- **axml-only parsing** for ADM: only the XML chunk is read from disk, not the GB-scale audio data.
+- **Metadata updates throttled to 4 FPS** to prevent React performance degradation.
+
+---
+
+## 🔊 Metadata Sources
+
+| Source Label | Description |
+|---|---|
+| `JOC OAMD` | Native E-AC-3 JOC bit-level parse — highest fidelity for streaming Atmos |
+| `DAMF (TrueHD Decoded)` | truehdd-decoded `.atmos.metadata` — frame-accurate object events |
+| `DAMF (Standalone)` | Direct `.atmos` file — full DAMF trajectory visualization |
+| `ADM XML` | ITU-R BS.2076 ADM XML — professional mastering source positions |
+| `TrueHD MAT (Parse Fallback)` | truehdd unavailable or incompatible binary |
+| `E-AC-3 (Parse Fallback)` | Encrypted/proprietary JOC payload |
+| `SYNTHETIC UPMIX` | Audio-reactive fallback (optional) |
+
+---
+
+## 🏛️ Credits & Acknowledgements
+
+- **[Cavern](https://github.com/VoidXH/Cavern):** Open-source research and reverse-engineering of E-AC-3 JOC and ADM formats. The DAMF event structure, ADM reference chain resolution, and binary WAV extraction approach in this project are directly informed by Cavern's implementations.
+- **[truehdd](https://github.com/truehdd/truehdd):** The Rust engine for professional TrueHD Atmos DAMF extraction.
+- **[FFmpeg](https://ffmpeg.org/):** Bundled via `ffmpeg-static` for container analysis, bitstream extraction, and audio decoding.
+- **[Three.js](https://threejs.org/):** The 3D engine powering the theater visualization.
+- **Google DeepMind (Antigravity):** AI-assisted engineering for spatial math, bitstream parsing, and binary format handling.
+
+---
+
+## ⚠️ Known Limitations
+
+- **Standalone `.atmos` audio:** The companion `.atmos.audio` CAF file has 92+ discrete channels in a format not yet supported for playback extraction. Visualization works fully from DAMF metadata.
+- **truehdd required:** TrueHD files without a compatible `bin/truehdd` binary will show a MAT-Encrypted fallback with no object data.
+- **E-AC-3 encryption:** Some proprietary/encrypted JOC payloads (common in Blu-ray) cannot be parsed at the bit level and will show a parse fallback.

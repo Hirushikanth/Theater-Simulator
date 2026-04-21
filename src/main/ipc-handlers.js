@@ -1,7 +1,8 @@
 import { ipcMain, dialog } from 'electron'
 import { readFile } from 'fs/promises'
-import { analyzeFile, decodeAudio, extractBitstream, cleanupTempDir } from './ffmpeg-bridge'
+import { analyzeFile, decodeAudio, extractBitstream, extractTrueHDStream, readAXMLChunk, cleanupTempDir } from './ffmpeg-bridge'
 import { analyzeTrueHD, decodeTrueHD } from './truehd-bridge'
+import { extractWavChannels } from './wav-extract'
 
 export function setupIpcHandlers() {
   // Open file dialog
@@ -59,6 +60,15 @@ export function setupIpcHandlers() {
     }
   })
 
+  // Extract raw TrueHD bitstream from container
+  ipcMain.handle('audio:extractTrueHDStream', async (_, filePath, options) => {
+    try {
+      return await extractTrueHDStream(filePath, options)
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
   // Decode TrueHD with truehdd (Professional/High-fidelity)
   ipcMain.handle('audio:decodeTrueHD', async (_, filePath, options) => {
     try {
@@ -83,6 +93,27 @@ export function setupIpcHandlers() {
     try {
       const text = await readFile(filePath, 'utf-8')
       return text
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  // Efficiently read just the axml chunk from a WAV/BW64 file
+  // Avoids loading multi-GB audio data into memory
+  ipcMain.handle('file:readAXMLChunk', async (_, filePath) => {
+    try {
+      const xml = await readAXMLChunk(filePath)
+      return xml
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  // Extract first N channels from a high-channel WAV/BW64 file (ADM BWF)
+  // Bypasses FFmpeg 64-channel pan filter limit via direct binary extraction
+  ipcMain.handle('audio:extractWavChannels', async (_, filePath, options) => {
+    try {
+      return await extractWavChannels(filePath, options)
     } catch (err) {
       return { error: err.message }
     }

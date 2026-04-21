@@ -1,216 +1,414 @@
 /**
  * DAMF (Dolby Atmos Master Format) Metadata Parser
  *
- * Parses .atmos.metadata YAML files produced by truehdd.
- * These contain bed configuration and object trajectories with
- * precise X, Y, Z coordinates over time.
+ * Parses the output files from truehdd:
+ *   - .atmos       → Root file (YAML): bed channel mapping + object IDs
+ *   - .atmos.metadata → Metadata file (YAML): per-object position events over time
+ *
+ * The metadata format is events-based:
+ *   sampleRate: 48000
+ *   events:
+ *     - ID: 10
+ *       samplePos: 0
+ *       active: true
+ *       pos: [-1, 1, 0.5]
+ *       gain: 0
+ *       size: 0
+ *       rampLength: 0
+ *
+ * Reference: Cavern's DolbyAtmosMasterMetadataFile.cs and DolbyAtmosMasterRootFile.cs
  */
 
 export class DAMFParser {
   constructor() {
-    this.objects = []
-    this.beds = []
+    this.objects = []        // dynamic objects with position trajectories
+    this.beds = []           // bed channels (static speakers)
+    this.sampleRate = 48000
     this.duration = 0
-    this.timeline = new Map()
+    this.objectMapping = []  // maps PCM stream index → internal object ID
+    this._objectEvents = new Map()  // ID → sorted array of events
   }
 
   /**
-   * Parse DAMF metadata text (YAML format)
-   * @param {string} yamlText - Contents of .atmos.metadata file
+   * Parse both the root file and metadata file.
+   * @param {string} rootYaml     - Contents of .atmos root file (can be null)
+   * @param {string} metadataYaml - Contents of .atmos.metadata file
+   * @returns {{ hasDAMF, objects, beds, duration }}
    */
-  parse(yamlText) {
+  parse(rootYaml, metadataYaml) {
     try {
-      // Simple YAML parser for the DAMF structure
-      // The format is relatively flat — we parse key fields manually
-      // to avoid requiring a full YAML library in the renderer
-      const data = this.parseSimpleYAML(yamlText)
-
-      if (data.objects) {
-        this.parseObjects(data.objects)
-      }
-      if (data.beds) {
-        this.parseBeds(data.beds)
-      }
-      if (data.duration) {
-        this.duration = parseFloat(data.duration) || 0
+      // Parse root file first (gives us bed/object ID mapping)
+      if (rootYaml) {
+        this.parseRootFile(rootYaml)
       }
 
-      this.buildTimeline()
+      // Parse metadata events
+      if (metadataYaml) {
+        this.parseMetadataFile(metadataYaml)
+      }
 
       return {
-        hasDAMF: true,
+        hasDAMF: this.objects.length > 0,
         objects: this.objects,
         beds: this.beds,
-        timeline: this.timeline,
-        duration: this.duration
+        duration: this.duration,
+        sampleRate: this.sampleRate,
+        objectCount: this.objects.length,
+        bedCount: this.beds.length
       }
     } catch (err) {
       console.error('DAMF parse error:', err)
-      return { hasDAMF: false, objects: [], timeline: new Map() }
+      return { hasDAMF: false, objects: [], beds: [], duration: 0 }
     }
   }
 
   /**
-   * Simple YAML-like parser for DAMF metadata
+   * Parse the .atmos root file (YAML).
+   * Extracts bed channel definitions and object ID mapping.
+   *
+   * Structure:
+   *   presentations:
+   *     - bedInstances:
+   *         - channels:
+   *             - channel: L
+   *               ID: 0
+   *         objects:
+   *           - ID: 10
    */
-  parseSimpleYAML(text) {
-    const result = { objects: [], beds: [] }
-    const lines = text.split('\n')
-    let currentSection = null
-    let currentObject = null
+  parseRootFile(yamlText) {
+    const lines = yamlText.split('\n')
+    let inBedChannels = false
+    let inObjects = false
+    let currentBed = null
+    const bedChannels = []
+    const objectIDs = []
 
     for (const line of lines) {
       const trimmed = line.trim()
       if (!trimmed || trimmed.startsWith('#')) continue
 
-      // Top-level keys
-      if (!line.startsWith(' ') && !line.startsWith('\t')) {
-        if (trimmed.startsWith('duration:')) {
-          result.duration = trimmed.split(':').slice(1).join(':').trim()
-        } else if (trimmed === 'objects:') {
-          currentSection = 'objects'
-        } else if (trimmed === 'beds:') {
-          currentSection = 'beds'
-        }
+      // Detect sections
+      if (trimmed === 'channels:' || trimmed.startsWith('channels:')) {
+        inBedChannels = true
+        inObjects = false
+        continue
+      }
+      if (trimmed === 'objects:' || trimmed.startsWith('objects:')) {
+        inObjects = true
+        inBedChannels = false
         continue
       }
 
-      // Object entries
-      if (currentSection === 'objects') {
-        if (trimmed.startsWith('- id:') || trimmed.startsWith('-  id:')) {
-          if (currentObject) result.objects.push(currentObject)
-          currentObject = { id: trimmed.split(':')[1]?.trim(), positions: [] }
-        } else if (currentObject) {
-          if (trimmed.startsWith('name:')) {
-            currentObject.name = trimmed.split(':').slice(1).join(':').trim()
-          } else if (trimmed.startsWith('type:')) {
-            currentObject.type = trimmed.split(':')[1]?.trim()
-          } else if (trimmed.match(/^\d|^- time:/)) {
-            // Position entry
-            const pos = this.parsePositionLine(trimmed)
-            if (pos) currentObject.positions.push(pos)
-          } else if (trimmed.startsWith('x:') || trimmed.startsWith('y:') || trimmed.startsWith('z:')) {
-            // Position components on separate lines
-            if (currentObject.positions.length > 0) {
-              const lastPos = currentObject.positions[currentObject.positions.length - 1]
-              const key = trimmed.split(':')[0].trim()
-              lastPos[key] = parseFloat(trimmed.split(':')[1]?.trim()) || 0
-            }
-          }
+      // Parse bed channels
+      if (inBedChannels) {
+        const channelMatch = trimmed.match(/channel:\s*(.+)/)
+        const idMatch = trimmed.match(/ID:\s*(\d+)/)
+
+        if (trimmed.startsWith('- ')) {
+          // New channel entry
+          if (currentBed) bedChannels.push(currentBed)
+          currentBed = { name: '', id: -1 }
+          // Check inline values
+          const inlineChannel = trimmed.match(/channel:\s*(\w+)/)
+          const inlineId = trimmed.match(/ID:\s*(\d+)/)
+          if (inlineChannel) currentBed.name = inlineChannel[1]
+          if (inlineId) currentBed.id = parseInt(inlineId[1])
+        } else if (currentBed) {
+          if (channelMatch) currentBed.name = channelMatch[1].trim()
+          if (idMatch) currentBed.id = parseInt(idMatch[1])
+        }
+
+        // Break out of bed channels when we hit an unindented line
+        if (!line.startsWith(' ') && !line.startsWith('\t') && !trimmed.startsWith('-')) {
+          inBedChannels = false
+          if (currentBed) { bedChannels.push(currentBed); currentBed = null }
+        }
+      }
+
+      // Parse object IDs
+      if (inObjects) {
+        const idMatch = trimmed.match(/ID:\s*(\d+)/)
+        if (idMatch) {
+          objectIDs.push(parseInt(idMatch[1]))
+        }
+
+        if (!line.startsWith(' ') && !line.startsWith('\t') && !trimmed.startsWith('-')) {
+          inObjects = false
         }
       }
     }
 
-    if (currentObject) result.objects.push(currentObject)
-    return result
+    // Flush last bed
+    if (currentBed) bedChannels.push(currentBed)
+
+    // Store bed channels
+    this.beds = bedChannels.map((b, i) => ({
+      id: i,
+      objectId: b.id,
+      name: b.name || `Bed ${i}`,
+      channelName: b.name
+    }))
+
+    // Build object mapping: PCM stream index → object ID
+    // First N streams are bed channels, then dynamic objects
+    this.objectMapping = [
+      ...bedChannels.map(b => b.id),
+      ...objectIDs
+    ]
+
+    console.log(`[DAMF] Root: ${bedChannels.length} bed channels, ${objectIDs.length} dynamic objects`)
   }
 
   /**
-   * Parse a position line from DAMF
+   * Parse the .atmos.metadata file (YAML).
+   * Events-based format with ID, samplePos, pos, gain, size, etc.
    */
-  parsePositionLine(line) {
-    // Try format: "time: 0.5 x: 0.3 y: 0.7 z: 0.2"
-    const timeMatch = line.match(/time:\s*([\d.]+)/)
-    const xMatch = line.match(/x:\s*([\d.-]+)/)
-    const yMatch = line.match(/y:\s*([\d.-]+)/)
-    const zMatch = line.match(/z:\s*([\d.-]+)/)
+  parseMetadataFile(yamlText) {
+    const lines = yamlText.split('\n')
+    let inEvents = false
+    let currentEvent = null
+    const allEvents = []
 
-    if (timeMatch) {
-      return {
-        time: parseFloat(timeMatch[1]),
-        x: xMatch ? parseFloat(xMatch[1]) : 0.5,
-        y: yMatch ? parseFloat(yMatch[1]) : 0.5,
-        z: zMatch ? parseFloat(zMatch[1]) : 0,
-        size: 0.05,
-        gain: 1.0,
-        confidence: 'damf'
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+
+      // Top-level sampleRate
+      const srMatch = trimmed.match(/^sampleRate:\s*(\d+)/)
+      if (srMatch) {
+        this.sampleRate = parseInt(srMatch[1]) || 48000
+        continue
+      }
+
+      // Detect events section
+      if (trimmed === 'events:') {
+        inEvents = true
+        continue
+      }
+
+      if (!inEvents) continue
+
+      // New event entry (starts with "- ")
+      if (trimmed.startsWith('- ')) {
+        if (currentEvent) allEvents.push(currentEvent)
+        currentEvent = {
+          id: -1,
+          samplePos: 0,
+          active: true,
+          pos: null,
+          gain: 0,
+          size: 0,
+          rampLength: 0
+        }
+        // Parse inline key-value on the same line as "- "
+        const inlineContent = trimmed.substring(2).trim()
+        this._parseEventField(currentEvent, inlineContent)
+        continue
+      }
+
+      // Continuation of current event (any indent = child of current "- " entry)
+      if (currentEvent && (line[0] === ' ' || line[0] === '\t')) {
+        this._parseEventField(currentEvent, trimmed)
       }
     }
-    return null
-  }
 
-  parseObjects(objData) {
-    for (let i = 0; i < objData.length; i++) {
-      const raw = objData[i]
-      this.objects.push({
-        id: i,
-        objectId: raw.id || String(i),
-        name: raw.name || `Object ${i}`,
-        type: raw.type || 'dynamic',
-        positions: (raw.positions || []).map(p => ({
-          time: p.time || 0,
-          x: p.x ?? 0.5,
-          y: p.y ?? 0.5,
-          z: p.z ?? 0,
-          size: p.size ?? 0.05,
-          gain: p.gain ?? 1.0,
+    // Flush last event
+    if (currentEvent) allEvents.push(currentEvent)
+
+    console.log(`[DAMF] Metadata: ${allEvents.length} events, sampleRate=${this.sampleRate}`)
+
+    // Group events by object ID
+    this._objectEvents.clear()
+    const bedObjectIds = new Set(this.beds.map(b => b.objectId))
+
+    for (const evt of allEvents) {
+      if (evt.id < 0) continue
+      // Skip bed channel events (static positions)
+      if (bedObjectIds.has(evt.id)) continue
+
+      if (!this._objectEvents.has(evt.id)) {
+        this._objectEvents.set(evt.id, [])
+      }
+      this._objectEvents.get(evt.id).push(evt)
+    }
+
+    // Sort each object's events by samplePos
+    for (const [id, events] of this._objectEvents) {
+      events.sort((a, b) => a.samplePos - b.samplePos)
+    }
+
+    // Build objects array
+    let objIndex = 0
+    for (const [id, events] of this._objectEvents) {
+      if (events.length === 0) continue
+
+      const positions = events
+        .filter(e => e.pos !== null && e.active)
+        .map(e => ({
+          time: e.samplePos / this.sampleRate,
+          x: this._normalizeX(e.pos[0]),
+          y: this._normalizeY(e.pos[1]),
+          z: this._normalizeZ(e.pos[2]),
+          gain: this._parseGainValue(e.gain),
+          size: Math.max(0.03, (e.size || 0) * 0.1 + 0.05),
+          rampLength: e.rampLength,
           confidence: 'damf'
         }))
-      })
-    }
-  }
 
-  parseBeds(bedData) {
-    this.beds = bedData.map((b, i) => ({
-      id: i,
-      name: b.name || `Bed ${i}`,
-      channelLayout: b.channelLayout || '7.1.4',
-      channels: b.channels || 12
-    }))
-  }
+      if (positions.length > 0) {
+        const lastTime = positions[positions.length - 1].time
+        if (lastTime > this.duration) this.duration = lastTime
 
-  buildTimeline() {
-    for (const obj of this.objects) {
-      for (const pos of obj.positions) {
-        // Use integer milliseconds for safe Map keys
-        const tMs = Math.round(pos.time * 1000)
-        if (!this.timeline.has(tMs)) {
-          this.timeline.set(tMs, [])
-        }
-        this.timeline.set(tMs, [...this.timeline.get(tMs), {
-          id: obj.id,
-          name: obj.name,
-          ...pos
-        }])
-
-        if (pos.time > this.duration) this.duration = pos.time
+        this.objects.push({
+          id: objIndex,
+          objectId: id,
+          name: `Object ${id}`,
+          positions
+        })
+        objIndex++
       }
     }
+
+    console.log(`[DAMF] Built ${this.objects.length} tracked objects, duration=${this.duration.toFixed(2)}s`)
   }
 
+  /**
+   * Parse a single key:value field from an event entry.
+   */
+  _parseEventField(event, text) {
+    if (!text) return
+
+    // ID
+    const idMatch = text.match(/ID:\s*(\d+)/)
+    if (idMatch) event.id = parseInt(idMatch[1])
+
+    // samplePos
+    const spMatch = text.match(/samplePos:\s*(\d+)/)
+    if (spMatch) event.samplePos = parseInt(spMatch[1])
+
+    // active
+    const activeMatch = text.match(/active:\s*(true|false)/)
+    if (activeMatch) event.active = activeMatch[1] === 'true'
+
+    // pos: [x, y, z] — array on one line
+    const posMatch = text.match(/pos:\s*\[([^\]]+)\]/)
+    if (posMatch) {
+      const parts = posMatch[1].split(',').map(s => parseFloat(s.trim()))
+      if (parts.length >= 3 && parts.every(p => !isNaN(p))) {
+        event.pos = parts
+      }
+    }
+
+    // gain (could be a number or "-inf")
+    const gainMatch = text.match(/gain:\s*(.+)/)
+    if (gainMatch) {
+      const val = gainMatch[1].trim()
+      event.gain = val === '-inf' ? -Infinity : parseFloat(val) || 0
+    }
+
+    // size
+    const sizeMatch = text.match(/size:\s*([\d.]+)/)
+    if (sizeMatch) event.size = parseFloat(sizeMatch[1]) || 0
+
+    // rampLength
+    const rampMatch = text.match(/rampLength:\s*(\d+)/)
+    if (rampMatch) event.rampLength = parseInt(rampMatch[1]) || 0
+  }
+
+  /**
+   * DAMF coordinate normalization.
+   * DAMF: X ∈ [-1, 1] (left/right), Y ∈ [-1, 1] (back/front), Z ∈ [0, 1] (height)
+   * Visualizer: all axes ∈ [0, 1]
+   *
+   * Cavern swaps Y and Z when reading pos: position = Vector3(x, z, y)
+   * From the Cavern source: "new Vector3(parts[0], parts[2], parts[1])"
+   * So DAMF [x, y, z] → Cavern (x=left/right, z=front/back, y=height)
+   */
+  _normalizeX(damfX) {
+    // DAMF X: -1 = left, +1 = right → viz 0 = left, 1 = right
+    return clamp01((damfX + 1) / 2)
+  }
+
+  _normalizeY(damfY) {
+    // DAMF Y: +1 = front, -1 = back → viz 0 = front, 1 = back
+    return clamp01((-damfY + 1) / 2)
+  }
+
+  _normalizeZ(damfZ) {
+    // DAMF Z: 0 = floor, 1 = ceiling → viz 0 = floor, 1 = ceiling
+    return clamp01(damfZ)
+  }
+
+  _parseGainValue(gain) {
+    if (gain === -Infinity || gain <= -100) return 0
+    // Convert dB to linear gain
+    return Math.pow(10, gain / 20)
+  }
+
+  /**
+   * Get interpolated object positions at a given playback time.
+   * For each object, binary-searches the event timeline and interpolates.
+   * Objects are only shown AFTER their first active event.
+   *
+   * @param {number} time - Playback time in seconds
+   * @returns {Array<{ id, name, x, y, z, gain, size, confidence }>}
+   */
   getObjectsAtTime(time) {
     const result = []
+
     for (const obj of this.objects) {
       if (obj.positions.length === 0) continue
 
-      let before = null, after = null
-      for (const pos of obj.positions) {
-        if (pos.time <= time) before = pos
-        if (pos.time >= time && !after) after = pos
-      }
-      if (!before && !after) continue
-      if (!before) before = after
-      if (!after) after = before
+      const positions = obj.positions
+      const firstTime = positions[0].time
+      const lastTime = positions[positions.length - 1].time
 
-      let x, y, z
-      if (before === after || before.time === after.time) {
-        x = before.x; y = before.y; z = before.z
-      } else {
-        const t = (time - before.time) / (after.time - before.time)
-        x = before.x + (after.x - before.x) * t
-        y = before.y + (after.y - before.y) * t
-        z = before.z + (after.z - before.z) * t
+      // Don't show object before its first active event
+      if (time < firstTime) continue
+
+      // After last keyframe: show at last known position
+      if (time >= lastTime) {
+        const p = positions[positions.length - 1]
+        result.push({
+          id: obj.id,
+          name: obj.name,
+          x: p.x, y: p.y, z: p.z,
+          gain: p.gain,
+          size: p.size,
+          confidence: 'damf'
+        })
+        continue
       }
+
+      // Binary search for bracket
+      let lo = 0, hi = positions.length - 1
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1
+        if (positions[mid].time <= time) lo = mid
+        else hi = mid
+      }
+
+      const before = positions[lo]
+      const after = positions[hi]
+
+      // Interpolate
+      const dt = after.time - before.time
+      const t = dt > 0 ? (time - before.time) / dt : 0
 
       result.push({
         id: obj.id,
         name: obj.name,
-        x, y, z,
-        size: before.size,
-        gain: before.gain,
+        x: before.x + (after.x - before.x) * t,
+        y: before.y + (after.y - before.y) * t,
+        z: before.z + (after.z - before.z) * t,
+        gain: before.gain + (after.gain - before.gain) * t,
+        size: before.size + (after.size - before.size) * t,
         confidence: 'damf'
       })
     }
+
     return result
   }
 }
+
+function clamp01(v) { return Math.max(0, Math.min(1, v)) }
