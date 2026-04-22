@@ -326,17 +326,17 @@ export class DAMFParser {
    */
   _normalizeX(damfX) {
     // DAMF X: -1 = left, +1 = right → viz 0 = left, 1 = right
-    return clamp01((damfX + 1) / 2)
+    return (damfX + 1) / 2
   }
 
   _normalizeY(damfY) {
     // DAMF Y: +1 = front, -1 = back → viz 0 = front, 1 = back
-    return clamp01((-damfY + 1) / 2)
+    return (-damfY + 1) / 2
   }
 
   _normalizeZ(damfZ) {
     // DAMF Z: 0 = floor, 1 = ceiling → viz 0 = floor, 1 = ceiling
-    return clamp01(damfZ)
+    return damfZ
   }
 
   _parseGainValue(gain) {

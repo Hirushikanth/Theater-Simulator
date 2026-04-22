@@ -337,9 +337,9 @@ export class ADMParser {
     return {
       time,
       duration: dur,
-      x: clamp01(finalX),
-      y: clamp01(finalY),
-      z: clamp01(finalZ),
+      x: finalX,
+      y: finalY,
+      z: finalZ,
       size,
       gain,
       confidence: 'adm'

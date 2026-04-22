@@ -5,9 +5,6 @@
 > [!IMPORTANT]
 > **LEGAL NOTICE & USAGE:** This is an **unofficial** Dolby Atmos object viewer developed strictly for **educational and individual use**. It is not affiliated with, endorsed by, or licensed by Dolby Laboratories.
 
-### 🤖 AI-Assisted Development
-This project was developed with significant **AI assistance (Antigravity by Google DeepMind)** to engineer the complex spatial math, bitstream parsing heuristics, binary format extraction, and the 3D WebGL rendering engine.
-
 ---
 
 ## ✨ Key Features
@@ -156,7 +153,6 @@ File Opened
 - **[truehdd](https://github.com/truehdd/truehdd):** The Rust engine for professional TrueHD Atmos DAMF extraction.
 - **[FFmpeg](https://ffmpeg.org/):** Bundled via `ffmpeg-static` for container analysis, bitstream extraction, and audio decoding.
 - **[Three.js](https://threejs.org/):** The 3D engine powering the theater visualization.
-- **Google DeepMind (Antigravity):** AI-assisted engineering for spatial math, bitstream parsing, and binary format handling.
 
 ---
 

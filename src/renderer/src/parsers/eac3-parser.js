@@ -246,9 +246,9 @@ class ObjectInfoBlock {
     let x, y, z
 
     if (this.differentialPos) {
-      x = clamp01(lastX + this.deltaX)
-      y = clamp01(lastY + this.deltaY)
-      z = clamp01(lastZ + this.deltaZ)
+      x = lastX + this.deltaX
+      y = lastY + this.deltaY
+      z = lastZ + this.deltaZ
     } else {
       x = this.posX
       y = this.posY
@@ -265,10 +265,9 @@ class ObjectInfoBlock {
       ) || 0.001
       const intersectLen = norm
       const distanceFactor = intersectLen / this.distance
-      // Interpolate between the surface point and room center (0.5,0.5,0.5)
-      x = clamp01(distanceFactor * x + (1 - distanceFactor) * 0.5)
-      y = clamp01(distanceFactor * y + (1 - distanceFactor) * 0.5)
-      z = clamp01(distanceFactor * z + (1 - distanceFactor) * 0.5)
+      x = distanceFactor * x + (1 - distanceFactor) * 0.5
+      y = distanceFactor * y + (1 - distanceFactor) * 0.5
+      z = distanceFactor * z + (1 - distanceFactor) * 0.5
     }
 
     // Screen-anchored transform
@@ -276,9 +275,9 @@ class ObjectInfoBlock {
       // Simplified screen anchor: scale X around center, Y depth curve
       const sf = this.screenFactor
       const cx = 0.5
-      x = clamp01(cx + (x - cx) * sf)
+      x = cx + (x - cx) * sf
       const depth = Math.pow(y, this.depthFactor)
-      y = clamp01(depth)
+      y = Math.max(0, depth)
     }
 
     return { x, y, z, valid: true }
