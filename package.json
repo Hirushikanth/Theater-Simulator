@@ -7,7 +7,11 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps && node scripts/fix-electron-install.js",
+    "fix-electron": "node scripts/fix-electron-install.js --force"
+  },
+  "engines": {
+    "node": ">=20 <23"
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",
