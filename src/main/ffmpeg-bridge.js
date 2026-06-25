@@ -44,7 +44,7 @@ export async function analyzeFile(filePath) {
       '-print_format', 'json',
       '-show_format',
       '-show_streams',
-      '-show_entries', 'stream=index,codec_name,codec_long_name,codec_type,channels,channel_layout,sample_rate,bit_rate,duration,profile',
+      '-show_entries', 'stream=index,codec_name,codec_long_name,codec_type,channels,channel_layout,sample_rate,bit_rate,duration,profile,tags',
       filePath
     ]
     execFile(ffprobePath, args, { maxBuffer: 1024 * 1024 * 10 }, (err, stdout, stderr) => {
@@ -70,7 +70,9 @@ export async function analyzeFile(filePath) {
             isTrueHD: s.codec_name === 'truehd',
             isAC3: s.codec_name === 'ac3',
             isAC4: s.codec_name === 'ac4',
-            isPCM: s.codec_name?.startsWith('pcm_')
+            isPCM: s.codec_name?.startsWith('pcm_'),
+            title: s.tags?.title || '',
+            language: s.tags?.language || ''
           }))
         }
         resolve(result)
@@ -144,7 +146,7 @@ export function decodeAudio(inputPath, options = {}) {
       args = [
         '-y',
         '-i', inputPath,
-        '-map', `0:a:${streamIndex}`,
+        '-map', `0:${streamIndex}`,
         '-c:a', 'pcm_s16le',
         '-ac', String(outChannels),
         '-ar', String(sampleRate),
@@ -210,7 +212,7 @@ export function extractBitstream(inputPath, options = {}) {
     const args = [
       '-y',
       '-i', inputPath,
-      '-map', `0:a:${streamIndex}`,
+      '-map', `0:${streamIndex}`,
       '-c:a', 'copy',
       outputPath
     ]
@@ -246,7 +248,7 @@ export function extractTrueHDStream(inputPath, options = {}) {
     const args = [
       '-y',
       '-i', inputPath,
-      '-map', `0:a:${streamIndex}`,
+      '-map', `0:${streamIndex}`,
       '-c:a', 'copy',
       '-f', 'truehd',
       outputPath

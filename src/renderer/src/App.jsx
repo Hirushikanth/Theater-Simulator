@@ -5,6 +5,7 @@ import ChannelMeters from './components/ChannelMeters'
 import MetadataPanel from './components/MetadataPanel'
 import FileInfo from './components/FileInfo'
 import AudioPlayer from './components/AudioPlayer'
+import StreamSelector from './components/StreamSelector'
 import { AudioEngine } from './engine/audio-engine'
 import { VBAPRenderer } from './engine/vbap-renderer'
 import { EAC3Parser } from './parsers/eac3-parser'
@@ -19,6 +20,8 @@ const audioEngine = new AudioEngine()
 const vbapRenderer = new VBAPRenderer()
 const vuMeterEngine = new VUMeterEngine(audioEngine, vbapRenderer)
 
+const STREAM_SELECTION_CANCELLED = 'STREAM_SELECTION_CANCELLED'
+
 export default function App() {
   const [fileInfo, setFileInfo] = useState(null)
   const [fileName, setFileName] = useState('')
@@ -31,6 +34,7 @@ export default function App() {
   const [speakerGains, setSpeakerGains] = useState(new Map())
   const [metadataSource, setMetadataSource] = useState(null)
   const [error, setError] = useState(null)
+  const [streamPickerStreams, setStreamPickerStreams] = useState(null)
 
   const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
   const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
@@ -41,6 +45,7 @@ export default function App() {
   
   // Track the active temp dirs so we don't delete them while playing!
   const activeTempDirsRef = useRef([])
+  const streamSelectionRef = useRef(null)
 
   const updateLoop = useCallback(() => {
     if (!audioEngine.isPlaying) return
@@ -104,6 +109,27 @@ export default function App() {
     activeTempDirsRef.current = []
   }
 
+  const promptStreamSelection = useCallback((streams) => {
+    return new Promise((resolve, reject) => {
+      streamSelectionRef.current = { resolve, reject }
+      setStreamPickerStreams(streams)
+    })
+  }, [])
+
+  const handleStreamSelect = useCallback((stream) => {
+    setStreamPickerStreams(null)
+    const pending = streamSelectionRef.current
+    streamSelectionRef.current = null
+    pending?.resolve(stream)
+  }, [])
+
+  const handleStreamCancel = useCallback(() => {
+    setStreamPickerStreams(null)
+    const pending = streamSelectionRef.current
+    streamSelectionRef.current = null
+    pending?.reject(new Error(STREAM_SELECTION_CANCELLED))
+  }, [])
+
   const handleFileOpen = useCallback(async () => {
     if (!window.atmosAPI) {
       setError('Native API not available. Please run as Electron app.')
@@ -119,6 +145,7 @@ export default function App() {
   const loadFile = useCallback(async (filePath) => {
     setIsLoading(true)
     setError(null)
+    setStreamPickerStreams(null)
     setObjects([])
     setMetadataSource(null)
     setCurrentTime(0)
@@ -145,6 +172,10 @@ export default function App() {
 
       setIsLoading(false)
     } catch (err) {
+      if (err?.message === STREAM_SELECTION_CANCELLED) {
+        setIsLoading(false)
+        return
+      }
       console.error('Load error:', err)
       setError(err.message)
       setIsLoading(false)
@@ -220,8 +251,10 @@ export default function App() {
     const analysis = await window.atmosAPI.analyzeFile(filePath)
     if (analysis.error) throw new Error(analysis.error)
 
-    const audioStream = analysis.audioStreams?.[0]
-    if (!audioStream) throw new Error('No audio stream found')
+    const streams = analysis.audioStreams
+    if (!streams?.length) throw new Error('No audio stream found')
+
+    const audioStream = await promptStreamSelection(streams)
 
     setFileInfo({
       ...audioStream,
@@ -245,7 +278,7 @@ export default function App() {
       // Non-ADM formats: FFmpeg standard decode (8ch cap for browser compat)
       // ADM .wav files are handled in Step 3b via extractWavChannels (no FFmpeg ch limit)
       const decodeResult = await window.atmosAPI.decodeAudio(filePath, {
-        streamIndex: 0,
+        streamIndex: audioStream.index,
         channels: Math.min(audioStream.channels || 8, 8),
         sampleRate: audioStream.sampleRate || 48000,
         sourceChannels: audioStream.channels || 8
@@ -268,7 +301,7 @@ export default function App() {
         decodeResult = await window.atmosAPI.extractWavChannels(filePath, { outChannels: 8 })
       } else {
         decodeResult = await window.atmosAPI.decodeAudio(filePath, {
-          streamIndex: 0,
+          streamIndex: audioStream.index,
           channels: Math.min(audioStream.channels || 8, 8),
           sampleRate: audioStream.sampleRate || 48000,
           sourceChannels: audioStream.channels || 8
@@ -299,7 +332,7 @@ export default function App() {
     // Step 5: Parse metadata (unless TrueHD already did it in step 3)
     if (!metadataParserRef.current) {
       if (isEAC3) {
-        await parseEAC3Metadata(filePath)
+        await parseEAC3Metadata(filePath, audioStream)
         if (!metadataParserRef.current && audioStream.isAtmos) {
           setMetadataSource('joc-encrypted')
         }
@@ -337,7 +370,7 @@ export default function App() {
       const result = await window.atmosAPI.decodeTrueHD(filePath, {
         presentation: 3,
         bedConform: true,
-        streamIndex: 0
+        streamIndex: audioStream.index
       })
 
       if (result.error) {
@@ -375,9 +408,11 @@ export default function App() {
     }
   }
 
-  const parseEAC3Metadata = async (filePath) => {
+  const parseEAC3Metadata = async (filePath, audioStream) => {
     try {
-      const bsResult = await window.atmosAPI.extractBitstream(filePath, { streamIndex: 0 })
+      const bsResult = await window.atmosAPI.extractBitstream(filePath, {
+        streamIndex: audioStream.index
+      })
       if (bsResult.error) return
 
       const bsData = await window.atmosAPI.readBinary(bsResult.outputPath)
@@ -583,6 +618,14 @@ export default function App() {
         onSeek={handleSeek}
         onVolumeChange={handleVolumeChange}
       />
+
+      {streamPickerStreams && (
+        <StreamSelector
+          streams={streamPickerStreams}
+          onSelect={handleStreamSelect}
+          onCancel={handleStreamCancel}
+        />
+      )}
     </div>
   )
 }
