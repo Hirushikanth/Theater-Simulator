@@ -596,6 +596,44 @@ class ObjectAudioMetadata {
     return best ? best.getPositions(timecode) : []
   }
 
+  /**
+   * Collect every unique intra-frame block offset across all valid elements
+   * and return the resolved object positions at each offset.
+   *
+   * KEY FIX: the raw `_blockOffsets[blk]` value is `read(6) + _sampleOffset`.
+   * Subtracting `_sampleOffset` gives the true 0-based audio block index
+   * (0 = first audio block, 1 = second, … up to numBlocks-1).
+   * This index × 256 samples/block gives the sample position within the frame.
+   *
+   * Without this, offsets like [0,1,2,3,4,5] are treated as sample counts
+   * (0,1,2,3,4,5 / 48000 ≈ 0ms each) and all collapse to one cache key.
+   *
+   * @returns {{ timecode: number, blockIndex: number, objects: Array }[]}
+   */
+  getAllBlockKeyframes () {
+    // Collect {rawOffset → sampleOffset} from every valid element.
+    // Two elements may share the same rawOffset; we keep the first sampleOffset
+    // encountered since it reflects the value used by the decoder for that tick.
+    const offsetMap = new Map()   // rawOffset → sampleOffset
+    for (const el of this._elements) {
+      if (el._valid && el.minOffset >= 0) {
+        for (const off of el._blockOffsets) {
+          if (!offsetMap.has(off)) offsetMap.set(off, el._sampleOffset)
+        }
+      }
+    }
+
+    return Array.from(offsetMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([tc, sampleOffset]) => ({
+        timecode:   tc,
+        // blockIndex is the 0-based audio-block index WITHIN the EAC3 frame.
+        // rawOffset = blockIndex + sampleOffset  →  blockIndex = rawOffset - sampleOffset.
+        blockIndex: Math.max(0, tc - sampleOffset),
+        objects:    this.getObjectsAtTimecode(tc)
+      }))
+  }
+
   // ── private ─────────────────────────────────────────────────────────────────
 
   /**
@@ -911,22 +949,35 @@ export class EAC3Parser {
 
         if (decoded && emdfDecoder.hasObjects) {
           this.isAtmos = true
-          // Convert sampleTime to seconds for our timeline
-          const timestamp = sampleTime / sampleRate
-          // Get objects from OAMD (prefer block 0 timecode = 0)
-          const objs = emdfDecoder.oamd.getObjectsAtTimecode(0)
-          for (const obj of objs) {
-            if (obj.valid && !obj.isBed) {
-              this.objects.push({
-                id:         obj.id,
-                timestamp,
-                x:          obj.x,
-                y:          obj.y,
-                z:          obj.z,
-                size:       obj.size,
-                gain:       obj.gain,
-                confidence: 'joc-native'
-              })
+
+          // Emit a keyframe for EVERY intra-frame block offset present in the
+          // OAMD payload, not just block 0. A single 32 ms EAC3 frame can
+          // encode up to 8 independent sub-block position updates.
+          //
+          // CRITICAL: blockIndex is the TRUE 0-based audio block index within
+          // the frame. Multiply by EAC3_SAMPLES_PER_BLOCK (256) to get the
+          // sample-accurate intra-frame offset, then add sampleTime (frame
+          // start in samples) before dividing by sampleRate.
+          //
+          // Previously `timecode` (raw bitfield value ≈ 0–5) was used directly,
+          // making all sub-frame timestamps round to the same millisecond.
+          const EAC3_SAMPLES_PER_BLOCK = 256   // fixed by the EAC3 standard
+          const keyframes = emdfDecoder.oamd.getAllBlockKeyframes()
+          for (const { timecode, blockIndex, objects: objs } of keyframes) {
+            const timestamp = (sampleTime + blockIndex * EAC3_SAMPLES_PER_BLOCK) / sampleRate
+            for (const obj of objs) {
+              if (obj.valid && !obj.isBed) {
+                this.objects.push({
+                  id:         obj.id,
+                  timestamp,
+                  x:          obj.x,
+                  y:          obj.y,
+                  z:          obj.z,
+                  size:       obj.size,
+                  gain:       obj.gain,
+                  confidence: 'joc-native'
+                })
+              }
             }
           }
         }
@@ -952,41 +1003,46 @@ export class EAC3Parser {
   }
 
   /**
-   * Get interpolated object positions at playback time `time` (seconds).
-   * Reuses a time-bucketed cache for O(1) lookup after first call.
+   * Return the exact set of objects encoded for the current playback time.
    *
-   * @param {number} time         playback time in seconds
-   * @param {number} [persistMs]  how long (ms) to keep showing an object after last update
+   * Uses a sorted-index binary search to find the last keyframe at or before
+   * `time` — no window, no lookahead, no future-event bleeding. When the same
+   * keyframe is active across multiple consecutive rAF calls the method returns
+   * the identical cached array reference, which lets App.jsx skip React state
+   * updates via a cheap identity comparison (objs !== lastRef).
+   *
+   * Zero heap allocations on the hot path after the index is built.
+   *
+   * @param {number} time  playback time in seconds
+   * @returns {Array}      the cached object array for the current keyframe
    */
-  getObjectsAtTime (time, persistMs = 64) {
+  getObjectsAtTime (time) {
     if (this.objects.length === 0) return []
 
+    // Build both lookup structures once on first call
     if (!this._timelineCache) {
       this._timelineCache = new Map()
       for (const obj of this.objects) {
-        // FIXED: Convert to integer milliseconds for safe Map keys
         const tMs = Math.round(obj.timestamp * 1000)
         if (!this._timelineCache.has(tMs)) this._timelineCache.set(tMs, [])
         this._timelineCache.get(tMs).push(obj)
       }
+      // Sorted integer-millisecond key array for binary search
+      this._sortedMs = Array.from(this._timelineCache.keys()).sort((a, b) => a - b)
     }
 
-    const result = new Map()
     const timeMs = Math.round(time * 1000)
 
-    // Lookup safely using integers
-    for (let c = timeMs - persistMs; c <= timeMs + persistMs; c++) {
-      const objs = this._timelineCache.get(c)
-      if (objs) {
-        for (const obj of objs) {
-          if (!result.has(obj.id) || c > Math.round(result.get(obj.id).timestamp * 1000)) {
-            result.set(obj.id, { ...obj })
-          }
-        }
-      }
+    // Binary search: find the largest key ≤ timeMs (most recent keyframe)
+    let lo = 0, hi = this._sortedMs.length - 1, idx = -1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (this._sortedMs[mid] <= timeMs) { idx = mid; lo = mid + 1 }
+      else hi = mid - 1
     }
 
-    return Array.from(result.values())
+    // Return the cached array directly — same reference while keyframe is active
+    return idx === -1 ? [] : (this._timelineCache.get(this._sortedMs[idx]) ?? [])
   }
 }
 

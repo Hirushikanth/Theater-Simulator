@@ -1,18 +1,41 @@
-import React, { useRef, useEffect, useCallback } from 'react'
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { TheaterScene } from '../three/TheaterScene'
-import { SUPPORTED_EXTENSIONS } from '../utils/constants'
 
-export default function TheaterView({ objects, speakerGains, vuMeterEngine, metadataSource, isPlaying, hasFile, onOpenFile }) {
+/**
+ * TheaterView — Three.js canvas container.
+ *
+ * Scene updates are driven DIRECTLY by App.jsx via the forwarded ref:
+ *   theaterViewRef.current.updateObjects(objs)        — called every rAF, no React state
+ *   theaterViewRef.current.updateSpeakerGains(gains)  — called every rAF, no React state
+ *
+ * This bypasses the React state → re-render → useEffect pipeline entirely,
+ * eliminating the ~16 ms scheduling latency that caused visual stutter.
+ */
+const TheaterView = forwardRef(function TheaterView (
+  { objects, speakerGains, vuMeterEngine, metadataSource, isPlaying, hasFile, onOpenFile },
+  ref
+) {
   const containerRef = useRef(null)
-  const sceneRef = useRef(null)
-  const rafRef = useRef(null)
+  const sceneRef     = useRef(null)
+  const rafRef       = useRef(null)
 
-  // Initialize Three.js scene
+  // ── Expose direct imperative methods to App.jsx ───────────────────────────
+  // Called inside the 60fps rAF loop — no React state, no re-render, no lag.
+  useImperativeHandle(ref, () => ({
+    updateObjects (objects) {
+      if (!sceneRef.current) return
+      sceneRef.current.updateObjects(objects)
+    },
+    updateSpeakerGains (gains) {
+      if (!sceneRef.current) return
+      sceneRef.current.updateSpeakerGains(gains)
+    }
+  }), [])
+
+  // ── Initialize Three.js scene ─────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return
-
     sceneRef.current = new TheaterScene(containerRef.current)
-
     return () => {
       if (sceneRef.current) {
         sceneRef.current.destroy()
@@ -21,43 +44,36 @@ export default function TheaterView({ objects, speakerGains, vuMeterEngine, meta
     }
   }, [])
 
-  // Update objects
-  useEffect(() => {
-    if (sceneRef.current && objects.length > 0) {
-      sceneRef.current.updateObjects(objects)
-    }
-  }, [objects])
-
-  // Update speaker glow from VBAP gains or audio levels
+  // ── Audio-level speaker glow (only when no VBAP spatial data is active) ──
+  // When metadata IS active, App.jsx drives speaker glow via the ref above.
+  // When no metadata, this loop reads raw audio levels from vuMeterEngine.
   useEffect(() => {
     if (!sceneRef.current) return
-    
-    if (speakerGains.size > 0 && objects.length > 0) {
-      sceneRef.current.updateSpeakerGains(speakerGains)
-    } else {
-      // Direct update loop for audio levels in ThreeJS
+
+    // Kill any previous loop first to prevent accumulation
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+
+    // Run audio-level loop only when playing and no VBAP gains are present
+    if (isPlaying && speakerGains.size === 0) {
       const updateLevels = () => {
-        if (!sceneRef.current || isPlaying === false) return
-        
+        if (!sceneRef.current) return
         const levels = vuMeterEngine.getLevels()
-        if (levels.size > 0) {
-          sceneRef.current.updateSpeakerLevels(levels)
-        }
-        
-        if (isPlaying) {
-          rafRef.current = requestAnimationFrame(updateLevels)
-        }
-      }
-      
-      if (isPlaying) {
+        if (levels.size > 0) sceneRef.current.updateSpeakerLevels(levels)
         rafRef.current = requestAnimationFrame(updateLevels)
       }
-      
-      return () => {
-        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(updateLevels)
+    }
+
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
       }
     }
-  }, [speakerGains, objects, isPlaying, vuMeterEngine])
+  }, [isPlaying, speakerGains, vuMeterEngine])
 
   const activeCount = objects.length
 
@@ -120,4 +136,6 @@ export default function TheaterView({ objects, speakerGains, vuMeterEngine, meta
       )}
     </div>
   )
-}
+})
+
+export default TheaterView

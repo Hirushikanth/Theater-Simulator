@@ -157,27 +157,25 @@ export class TheaterScene {
       mesh.material.color.setRGB(rgb.r, rgb.g, rgb.b)
       mesh.material.emissive.setRGB(rgb.r * 0.5, rgb.g * 0.5, rgb.b * 0.5)
 
-      // Smooth opacity transitions (fade in)
+      // Snap opacity directly to the metadata-driven value — no lerp,
+      // no artificial smoothing. The visualiser shows exactly what the
+      // encoder wrote, frame by frame.
       const targetOpacity = 0.4 + (obj.gain || 0.8) * 0.6
-      mesh.material.opacity = mesh.material.opacity * 0.7 + targetOpacity * 0.3
+      mesh.material.opacity = targetOpacity
 
       // Size scaling
       const scale = 0.08 + (obj.size || 0.05) * 0.3
       mesh.scale.setScalar(scale / 0.1)
     }
 
-    // 4. Handle fade-outs and returning objects to the pool
+    // 4. Objects absent from this keyframe are immediately returned to the pool.
+    // No fade-out — the metadata no longer references them, so they vanish.
     for (const [id, mesh] of this.activeMeshes) {
       if (!incomingIds.has(id)) {
-        // Fast fade out
-        mesh.material.opacity *= 0.80 
-        
-        // Once invisible, return to pool
-        if (mesh.material.opacity < 0.01) {
-          mesh.visible = false
-          this.activeMeshes.delete(id)
-          this.objectPool.push(mesh)
-        }
+        mesh.visible = false
+        mesh.material.opacity = 0
+        this.activeMeshes.delete(id)
+        this.objectPool.push(mesh)
       }
     }
   }

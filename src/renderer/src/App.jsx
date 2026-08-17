@@ -40,33 +40,66 @@ export default function App() {
   const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
 
   const metadataParserRef = useRef(null)
-  const rafRef = useRef(null)
-  const lastTimeUpdate = useRef(0)
-  
+  const rafRef            = useRef(null)
+  const lastObjectsRef    = useRef([])    // identity-compare guard to skip redundant React state updates
+  const theaterViewRef    = useRef(null)  // imperative handle to TheaterScene — bypasses React
+  const lastRawTimeRef    = useRef(0)     // smooth playhead sync baseline
+  const lastSyncTimeRef   = useRef(0)     // high-res timestamp of the sync baseline
+
   // Track the active temp dirs so we don't delete them while playing!
-  const activeTempDirsRef = useRef([])
+  const activeTempDirsRef  = useRef([])
   const streamSelectionRef = useRef(null)
 
   const updateLoop = useCallback(() => {
     if (!audioEngine.isPlaying) return
 
-    const time = audioEngine.getCurrentTime()
+    const rawTime = audioEngine.getCurrentTime()
+    const now = performance.now()
 
-    // THROTTLE REACT STATE TO 4 FPS (Saves massive CPU overhead)
-    if (time - lastTimeUpdate.current > 0.25) {
-      setCurrentTime(time)
-      lastTimeUpdate.current = time
+    // Align smooth time estimator when the audio playhead moves or seeks
+    if (rawTime !== lastRawTimeRef.current) {
+      lastRawTimeRef.current = rawTime
+      lastSyncTimeRef.current = now
     }
+
+    const elapsed = (now - lastSyncTimeRef.current) / 1000
+    // Smoothly estimate current time, limiting the maximum single interpolation step to 100ms
+    // to handle audio pauses, stalls, or browser buffering gracefully.
+    const time = Math.min(rawTime + Math.min(elapsed, 0.1), audioEngine.duration || 99999)
 
     if (metadataParserRef.current) {
       const objs = metadataParserRef.current.getObjectsAtTime(time)
-      setObjects(objs)
 
-      if (objs.length > 0) {
-        const gains = vbapRenderer.calculateSceneGains(objs)
-        setSpeakerGains(gains)
-        vuMeterEngine.setSpeakerGains(gains)
+      // ── FAST PATH (60 fps) ─────────────────────────────────────────────────
+      // Drive the Three.js scene directly — no React state, no re-render, no
+      // scheduling latency. The ref call is synchronous and completes before
+      // the next Three.js animate() tick.
+      if (theaterViewRef.current) {
+        theaterViewRef.current.updateObjects(objs)
       }
+
+      // Update VBAP gains whenever the keyframe changes and propagate to scene
+      if (objs !== lastObjectsRef.current) {
+        lastObjectsRef.current = objs
+
+        if (objs.length > 0) {
+          const gains = vbapRenderer.calculateSceneGains(objs)
+          if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(gains)
+          vuMeterEngine.setSpeakerGains(gains)
+          setObjects(objs)
+          setSpeakerGains(gains)
+        } else {
+          // Objects gone — clear UI
+          setObjects([])
+        }
+      }
+
+      // ── REACT PATH (display refresh rate) ─────────────────────────────────
+      // Playhead follows every rAF tick — 60 FPS on a 60 Hz display,
+      // matching the device framerate (120 FPS on 120 Hz panels, etc.).
+      setCurrentTime(time)
+    } else {
+      setCurrentTime(rawTime)
     }
 
     rafRef.current = requestAnimationFrame(updateLoop)
@@ -151,7 +184,9 @@ export default function App() {
     setCurrentTime(0)
     setSpeakerGains(new Map())
     metadataParserRef.current = null
-    lastTimeUpdate.current = 0
+    lastObjectsRef.current    = []   // reset so first frame of new file is never skipped
+    // Clear the scene immediately on new file load
+    if (theaterViewRef.current) theaterViewRef.current.updateObjects([])
 
     try {
       setFileName(getFileName(filePath))
@@ -472,6 +507,8 @@ export default function App() {
       vuMeterEngine.stop()
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     } else {
+      lastRawTimeRef.current = audioEngine.getCurrentTime()
+      lastSyncTimeRef.current = performance.now()
       audioEngine.play()
       setIsPlaying(true)
       vuMeterEngine.start()
@@ -491,16 +528,21 @@ export default function App() {
   const handleSeek = useCallback((time) => {
     audioEngine.seek(time)
     setCurrentTime(time)
-    lastTimeUpdate.current = time  // Reset throttle so UI updates immediately
+    lastRawTimeRef.current = time
+    lastSyncTimeRef.current = performance.now()
 
-    // Force a one-off update for the visualizer while paused
-    if (!isPlaying && metadataParserRef.current) {
+    if (metadataParserRef.current) {
       const objs = metadataParserRef.current.getObjectsAtTime(time)
+      lastObjectsRef.current = objs
       setObjects(objs)
+
+      // Always update the 3D scene directly — works during pause too
+      if (theaterViewRef.current) theaterViewRef.current.updateObjects(objs)
 
       if (objs.length > 0) {
         const gains = vbapRenderer.calculateSceneGains(objs)
         setSpeakerGains(gains)
+        if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(gains)
         vuMeterEngine.setSpeakerGains(gains)
       } else {
         // Clear ghost glows if scrubbing to an empty section
@@ -509,7 +551,7 @@ export default function App() {
         vuMeterEngine.setSpeakerGains(emptyGains)
       }
     }
-  }, [isPlaying])
+  }, [])
 
   const handleVolumeChange = useCallback((val) => {
     setVolume(val)
@@ -589,6 +631,7 @@ export default function App() {
 
       <div className="main-content">
         <TheaterView
+          ref={theaterViewRef}
           objects={objects}
           speakerGains={speakerGains}
           vuMeterEngine={vuMeterEngine}

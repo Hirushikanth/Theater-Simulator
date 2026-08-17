@@ -9,7 +9,7 @@
 
 ## ✨ Key Features
 
-- **Real-Time 3D Theater Visualization:** A stunning Three.js-powered home theater with dynamic object spheres, trajectory trails, and per-speaker glow indicators — updated at 60 FPS.
+- **Real-Time 3D Theater Visualization:** A stunning Three.js-powered home theater with dynamic object spheres and per-speaker glow indicators — updated at the display refresh rate (60 FPS+).
 - **Professional TrueHD Atmos Decoding:** Full end-to-end pipeline using the Rust-based **[truehdd](https://github.com/truehdd/truehdd)** decoder:
   - Auto-detects and extracts raw `.thd` bitstreams from MKV/MKA containers via FFmpeg
   - Decodes to **DAMF** (Dolby Atmos Master Format): `.atmos` root + `.atmos.metadata` events
@@ -88,6 +88,11 @@
    npm run build
    ```
 
+6. **Package Installers (DMG/EXE/AppImage):**
+   ```bash
+   npm run dist
+   ```
+
 ---
 
 ## 🖱️ How to Use
@@ -129,7 +134,7 @@ File Opened
 - **Audio and metadata are decoupled** for TrueHD: truehdd handles metadata, FFmpeg handles audio. This avoids complex multi-channel CAF rematrix issues.
 - **ADM audio bypasses FFmpeg entirely**: the bundled `wav-extract.js` copies PCM frames at the binary level — no channel limit, no codec conversion, no quality loss for the first 8 channels.
 - **axml-only parsing** for ADM: only the XML chunk is read from disk, not the GB-scale audio data.
-- **Metadata updates throttled to 4 FPS** to prevent React performance degradation.
+- **Metadata updates run at the display refresh rate:** the Three.js scene is driven directly from the rAF loop (no React re-renders), while React state updates for the playhead, objects, and speaker gains follow every animation frame — 60 FPS on a 60 Hz display, matching higher refresh rates on capable panels. Identity-guarded object updates prevent redundant re-renders between keyframes.
 
 ---
 
