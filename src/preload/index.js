@@ -1,8 +1,17 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('atmosAPI', {
   // File operations
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
+  // Resolve a real FS path for a dropped File (Electron no longer
+  // reliably populates File.path in the renderer — use webUtils).
+  getFilePath: (file) => {
+    try {
+      const p = webUtils.getPathForFile(file)
+      if (p) return p
+    } catch {}
+    return file?.path
+  },
   readBinary: (filePath) => ipcRenderer.invoke('file:readBinary', filePath),
   readText: (filePath) => ipcRenderer.invoke('file:readText', filePath),
   readAXMLChunk: (filePath) => ipcRenderer.invoke('file:readAXMLChunk', filePath),

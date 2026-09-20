@@ -176,6 +176,12 @@ export default function App() {
   }, [])
 
   const loadFile = useCallback(async (filePath) => {
+    if (!filePath || typeof filePath !== 'string') {
+      console.warn('[loadFile] dropped without a file-system path:', filePath)
+      setError('That file was dropped without a file-system path — use Open File instead.')
+      setIsLoading(false)
+      return
+    }
     setIsLoading(true)
     setError(null)
     setStreamPickerStreams(null)
@@ -568,7 +574,17 @@ export default function App() {
     e.stopPropagation()
     const files = e.dataTransfer?.files
     if (files?.length > 0) {
-      loadFile(files[0].path)
+      const dropped = files[0]
+      let filePath = dropped.path
+      try {
+        filePath = window.atmosAPI?.getFilePath?.(dropped) || filePath
+      } catch {}
+      console.log('[drop]', { name: dropped.name, path: filePath, size: dropped.size, type: dropped.type })
+      if (!filePath || typeof filePath !== 'string') {
+        setError('That file was dropped without a file-system path — use Open File instead.')
+        return
+      }
+      loadFile(filePath)
     }
   }, [loadFile])
 

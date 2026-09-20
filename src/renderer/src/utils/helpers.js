@@ -66,6 +66,7 @@ export function normalize3D(v) {
 
 // Get file extension
 export function getFileExtension(path) {
+  if (!path || typeof path !== 'string') return ''
   const dot = path.lastIndexOf('.')
   if (dot === -1) return ''
   return path.slice(dot).toLowerCase()
@@ -73,6 +74,7 @@ export function getFileExtension(path) {
 
 // Get file name from path
 export function getFileName(path) {
+  if (!path || typeof path !== 'string') return 'unknown file'
   return path.split(/[\\/]/).pop() || path
 }
 

@@ -1,4 +1,4 @@
-import { spawn, execFile } from 'child_process'
+import { spawn, execFile, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { join, extname } from 'path'
 import { app } from 'electron'
@@ -6,8 +6,26 @@ import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 
 /**
+ * Check that a binary actually executes on this machine.
+ * Catches mislabeled-arch bundles (e.g. ffprobe-static's darwin/arm64
+ * binary is really x86_64 → spawn fails with EBADARCH / error -86
+ * "bad CPU type in executable" when Rosetta is not installed).
+ */
+function binaryWorks(binPath) {
+  try {
+    execFileSync(binPath, ['-version'], { stdio: 'ignore', timeout: 8000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Locate ffmpeg/ffprobe binary.
- * Tries: bundled ffmpeg-static → system PATH
+ * Tries: bundled ffmpeg-static → system PATH.
+ * Verifies the bundled binary actually runs before using it, so a
+ * wrong-arch bundle falls back to a working system install instead of
+ * failing later with "spawn Unknown system error -86".
  */
 function findBinary(name) {
   try {
@@ -19,9 +37,16 @@ function findBinary(name) {
     }
 
     if (staticPath && existsSync(staticPath)) {
-      return app.isPackaged
-        ? staticPath.replace('app.asar', 'app.asar.unpacked')
-        : staticPath
+      if (binaryWorks(staticPath)) {
+        return app.isPackaged
+          ? staticPath.replace('app.asar', 'app.asar.unpacked')
+          : staticPath
+      }
+      console.warn(
+        `[ffmpeg-bridge] Bundled ${name} at ${staticPath} exists but does not execute ` +
+        `(likely wrong CPU arch — install Rosetta or a native ${name} e.g. 'brew install ffmpeg'). ` +
+        `Falling back to system PATH.`
+      )
     }
   } catch (err) {
     console.error(`Failed to resolve ${name}-static:`, err)
@@ -48,7 +73,12 @@ export async function analyzeFile(filePath) {
       filePath
     ]
     execFile(ffprobePath, args, { maxBuffer: 1024 * 1024 * 10 }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(`ffprobe error: ${err.message}`))
+      if (err) {
+        const hint = /-86|EBADARCH|bad CPU/i.test(err.message)
+          ? ' (ffprobe binary is the wrong CPU arch — install Rosetta or a native ffprobe, e.g. `brew install ffmpeg`, then restart)'
+          : ''
+        return reject(new Error(`ffprobe error: ${err.message}${hint}`))
+      }
       try {
         const info = JSON.parse(stdout)
         // Detect Atmos indicators
