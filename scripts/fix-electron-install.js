@@ -11,13 +11,36 @@ const path = require('path')
 const electronDir = path.resolve(__dirname, '../node_modules/electron')
 const { version } = require(path.join(electronDir, 'package.json'))
 const distPath = path.join(electronDir, 'dist')
-const platformPath = 'Electron.app/Contents/MacOS/Electron'
-const frameworksPath = path.join(distPath, 'Electron.app/Contents/Frameworks')
+
+const PLATFORM_CONFIG = {
+  darwin: {
+    // Relative path written to path.txt, matching the electron npm package layout.
+    binary: 'Electron.app/Contents/MacOS/Electron',
+    verify: (dist) =>
+      fs.existsSync(path.join(dist, 'Electron.app/Contents/Frameworks')),
+    missingMessage: 'Frameworks directory missing',
+  },
+  win32: {
+    binary: 'electron.exe',
+    verify: (dist) => fs.existsSync(path.join(dist, 'electron.exe')),
+    missingMessage: 'electron.exe missing',
+  },
+  linux: {
+    binary: 'electron',
+    verify: (dist) => fs.existsSync(path.join(dist, 'electron')),
+    missingMessage: 'electron binary missing',
+  },
+}
+
+const platformConfig = PLATFORM_CONFIG[process.platform]
+if (!platformConfig) {
+  throw new Error(`Unsupported platform for Electron fix: ${process.platform}`)
+}
 
 function isInstalled() {
   return (
     fs.existsSync(path.join(electronDir, 'path.txt')) &&
-    fs.existsSync(frameworksPath)
+    platformConfig.verify(distPath)
   )
 }
 
@@ -37,6 +60,9 @@ async function main() {
   })
 
   console.log('Extracting', zipPath)
+  if (!zipPath || !fs.existsSync(zipPath)) {
+    throw new Error(`Electron artifact download failed: ${zipPath}`)
+  }
   fs.rmSync(distPath, { recursive: true, force: true })
   fs.mkdirSync(distPath, { recursive: true })
 
@@ -46,11 +72,13 @@ async function main() {
     execFileSync('unzip', ['-o', zipPath, '-d', distPath], { stdio: 'inherit' })
   }
 
-  if (!fs.existsSync(frameworksPath)) {
-    throw new Error('Extraction incomplete: Frameworks directory missing')
+  if (!platformConfig.verify(distPath)) {
+    throw new Error(
+      `Extraction incomplete (${process.platform}): ${platformConfig.missingMessage}`
+    )
   }
 
-  fs.writeFileSync(path.join(electronDir, 'path.txt'), platformPath)
+  fs.writeFileSync(path.join(electronDir, 'path.txt'), platformConfig.binary)
   console.log('Electron installed successfully')
 }
 
