@@ -69,7 +69,7 @@ export async function analyzeFile(filePath) {
       '-print_format', 'json',
       '-show_format',
       '-show_streams',
-      '-show_entries', 'stream=index,codec_name,codec_long_name,codec_type,channels,channel_layout,sample_rate,bit_rate,duration,profile,tags',
+      '-show_entries', 'stream=index,codec_name,codec_long_name,codec_tag_string,codec_type,channels,channel_layout,sample_rate,bit_rate,duration,profile,tags',
       filePath
     ]
     execFile(ffprobePath, args, { maxBuffer: 1024 * 1024 * 10 }, (err, stdout, stderr) => {
@@ -89,6 +89,7 @@ export async function analyzeFile(filePath) {
             index: s.index,
             codec: s.codec_name,
             codecLong: s.codec_long_name,
+            codecTag: s.codec_tag_string || '',
             profile: s.profile || '',
             channels: s.channels,
             channelLayout: s.channel_layout || '',
@@ -113,13 +114,29 @@ export async function analyzeFile(filePath) {
   })
 }
 
-function detectAtmos(stream) {
+export function detectAtmos(stream) {
   const codec = stream.codec_name || ''
   const profile = (stream.profile || '').toLowerCase()
+  const codecLong = (stream.codec_long_name || '').toLowerCase()
+  const codecTag = (stream.codec_tag_string || '').toLowerCase()
+  const channels = stream.channels || 0
+  const layout = (stream.channel_layout || '').toLowerCase()
+  const bitRate = parseInt(stream.bit_rate) || 0
+  // FFmpeg's own long name already flags Atmos when its decoder sees JOC
+  // (e.g. "Dolby Digital Plus + Dolby Atmos") — trust it when present.
+  if (codecLong.includes('atmos')) return true
   // EAC3 with Atmos profile or high channel count
-  if (codec === 'eac3' && (profile.includes('atmos') || stream.channels > 6)) return true
+  if (codec === 'eac3' && (profile.includes('atmos') || channels > 6)) return true
+  // 5.1-channel E-AC-3 JOC music (e.g. 6ch / 5.1(side) / ~768kbps / ec-3 tag
+  // with no profile in ffprobe JSON) is an Atmos candidate — the JOC parser
+  // confirms it post-parse. Plain 5.1 DD+ without JOC may badge as a
+  // candidate here, but objects only appear on parse success.
+  if (
+    codec === 'eac3' && channels === 6 &&
+    (codecTag === 'ec-3' || (layout.includes('5.1') && bitRate >= 384000))
+  ) return true
   // TrueHD Atmos - often not explicitly labeled, so we treat 8+ channels as candidates
-  if (codec === 'truehd' && (profile.includes('atmos') || stream.channels >= 8)) return true
+  if (codec === 'truehd' && (profile.includes('atmos') || channels >= 8)) return true
   // AC4 usually implies Atmos
   if (codec === 'ac4') return true
   return false

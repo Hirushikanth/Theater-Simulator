@@ -465,6 +465,9 @@ export default function App() {
       if (result.objects.length > 0) {
         metadataParserRef.current = parser
         setMetadataSource('joc')
+        // JOC parse success is ground truth — upgrade fileInfo even when the
+        // ffprobe pre-hint missed (e.g. 5.1-ch E-AC-3 with no profile field).
+        setFileInfo((prev) => (prev ? { ...prev, isAtmos: true } : prev))
       } else if (result.isAtmos) {
         setMetadataSource('joc-encrypted')
       }
