@@ -29,6 +29,7 @@ build/Release
 
 # Bundled Binaries (Local Only)
 bin/truehdd
+bin/truehdd.exe
 bin/ffmpeg
 bin/ffprobe
 

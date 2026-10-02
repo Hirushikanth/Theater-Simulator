@@ -44,9 +44,9 @@
 ## 🛠️ Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- [npm](https://www.npmjs.com/)
-- [Rust & Cargo](https://rustup.rs/) — required for the Professional TrueHD Decoder
+- [Node.js](https://nodejs.org/) (>=20 <25 — 22 LTS or 24 LTS recommended, matching `engines` in `package.json`)
+- [npm](https://www.npmjs.com/) (on Windows, use `npm.cmd` if PowerShell blocks `npm.ps1` via ExecutionPolicy)
+- [Rust & Cargo](https://rustup.rs/) — only required if building the Professional TrueHD Decoder from source (Option B below). On Windows a source build also needs Visual Studio Build Tools with the "Desktop development with C++" workload (provides `link.exe`/`cl.exe`). The prebuilt binary path (Option A) needs no Rust.
 
 ### Installation & Setup
 
@@ -61,22 +61,58 @@
    npm install
    ```
 
-3. **Build & install the Professional TrueHD Decoder (Recommended):**
+  3. **Install the Professional TrueHD Decoder (Recommended, tested with truehdd 0.6.2):**
 
-   The application uses `truehdd` for native TrueHD Atmos DAMF extraction. Without it, TrueHD files will show a MAT-Encrypted fallback (no object visualization).
+    The application uses `truehdd` for native TrueHD Atmos DAMF extraction. Without it, TrueHD files will show a MAT-Encrypted fallback (no object visualization).
 
-   ```bash
-   # Clone truehdd
-   git clone https://github.com/truehdd/truehdd
-   cd truehdd
+    **Option A — Prebuilt binary (recommended, no Rust needed):**
 
-   # Build the release binary
-   cargo build --release
+    Download the release for your OS from the [truehdd releases page](https://github.com/truehdd/truehdd/releases) (tested with `0.6.2`; on Windows pick the `*-x86_64-pc-windows-msvc.zip` asset containing `truehdd.exe`), then place it in the project's `bin/` folder:
 
-   # Copy binary to the project's bin folder
-   mkdir -p ../Theater-Simulator/bin
-   cp target/release/truehdd ../Theater-Simulator/bin/
-   ```
+    ```bash
+    # macOS / Linux
+    unzip truehdd-*.zip
+    mkdir -p Theater-Simulator/bin
+    cp truehdd Theater-Simulator/bin/
+    ```
+
+    ```powershell
+    # Windows (PowerShell) — note the .exe name
+    Expand-Archive truehdd-*-x86_64-pc-windows-msvc.zip -DestinationPath truehdd-dl
+    New-Item -ItemType Directory -Force -Path Theater-Simulator\bin | Out-Null
+    Copy-Item truehdd-dl\truehdd.exe Theater-Simulator\bin\
+    ```
+
+    **Option B — Build from source (requires Rust + Cargo):**
+
+    ```bash
+    # Clone truehdd
+    git clone https://github.com/truehdd/truehdd
+    cd truehdd
+
+    # Build the release binary
+    cargo build --release
+
+    # Copy binary to the project's bin folder
+    mkdir -p ../Theater-Simulator/bin
+    cp target/release/truehdd ../Theater-Simulator/bin/
+    ```
+
+    ```powershell
+    # Windows (PowerShell) — same build, Windows copy (requires VS Build Tools C++ workload)
+    cargo build --release
+    New-Item -ItemType Directory -Force -Path ..\Theater-Simulator\bin | Out-Null
+    Copy-Item target\release\truehdd.exe ..\Theater-Simulator\bin\
+    ```
+
+    **Verify (all platforms):**
+
+    ```bash
+    ./Theater-Simulator/bin/truehdd --version   # macOS / Linux
+    .\Theater-Simulator\bin\truehdd.exe --version  # Windows (expect 0.6.2)
+    ```
+
+    > **Note (Windows):** the app resolves `bin/truehdd.exe` — a lookup fix for the `.exe` extension (P1-11) is still pending, so even a correctly installed binary may degrade to `mat-encrypted` until that lands.
 
 4. **Run in Development Mode:**
    ```bash
@@ -98,7 +134,7 @@
 ## 🖱️ How to Use
 
 1. **Launch the App** (`npm run dev`)
-2. **Enable Professional Decoder** in the top bar (requires `bin/truehdd` binary)
+2. **Enable Professional Decoder** in the top bar (requires `bin/truehdd` on macOS/Linux, `bin/truehdd.exe` on Windows)
 3. **Click Open File** — supported formats are listed above
 4. **Watch the terminal** for real-time decode progress (truehdd frame count, wav-extract stats, etc.)
 5. **Hit Play** and watch the Atmos objects move through the 3D theater in sync with the audio
@@ -164,5 +200,5 @@ File Opened
 ## ⚠️ Known Limitations
 
 - **Standalone `.atmos` audio:** The companion `.atmos.audio` CAF file has 92+ discrete channels in a format not yet supported for playback extraction. Visualization works fully from DAMF metadata.
-- **truehdd required:** TrueHD files without a compatible `bin/truehdd` binary will show a MAT-Encrypted fallback with no object data.
+- **truehdd required:** TrueHD files without a compatible `bin/truehdd` (`bin/truehdd.exe` on Windows) binary will show a MAT-Encrypted fallback with no object data.
 - **E-AC-3 encryption:** Some proprietary/encrypted JOC payloads (common in Blu-ray) cannot be parsed at the bit level and will show a parse fallback.

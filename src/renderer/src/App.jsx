@@ -295,7 +295,8 @@ export default function App() {
     const streams = analysis.audioStreams
     if (!streams?.length) throw new Error('No audio stream found')
 
-    const audioStream = await promptStreamSelection(streams)
+    // Single audio stream (e.g. .m4a + cover art) — no picker needed.
+    const audioStream = streams.length === 1 ? streams[0] : await promptStreamSelection(streams)
 
     setFileInfo({
       ...audioStream,
