@@ -8,7 +8,7 @@
  * - Playback synchronization for visualization
  */
 
-import { SPEAKERS } from '../utils/constants'
+import { SPEAKERS, CHANNEL_LAYOUTS } from '../utils/constants'
 
 export class AudioEngine {
   constructor() {
@@ -23,6 +23,7 @@ export class AudioEngine {
     this.isPlaying = false
     this.duration = 0
     this.channelCount = 0
+    this.channelLayout = ''
     this.onTimeUpdate = null
     this.onEnded = null
     this._rafId = null
@@ -51,12 +52,13 @@ export class AudioEngine {
    * @param {number} knownChannelCount - Channels from ffprobe
    * @param {number} knownDuration - Duration from ffprobe
    */
-  async loadAudio(url, knownChannelCount, knownDuration) {
+  async loadAudio(url, knownChannelCount, knownDuration, knownLayout = '') {
     await this.init()
     this.cleanupGraph()
     this.stop()
 
     this.channelCount = knownChannelCount || 8
+    this.channelLayout = knownLayout || ''
     this.duration = knownDuration || 0
 
     return new Promise((resolve, reject) => {
@@ -152,7 +154,17 @@ export class AudioEngine {
 
     // Downmix merger for local speakers
     const merger = this.ctx.createChannelMerger(Math.min(this.channelCount, 2))
-    
+
+    if (this.channelCount === 1) {
+      // Mono has no stereo pair — route the single (center) channel straight
+      // through. Without this the >=2 wiring gate below connects nothing and
+      // mono files play silent.
+      const monoGain = this.ctx.createGain()
+      monoGain.gain.value = 1.0
+      this.splitter.connect(monoGain, 0)
+      monoGain.connect(merger, 0, 0)
+    }
+
     if (this.channelCount >= 2) {
       const leftGain = this.ctx.createGain()
       const rightGain = this.ctx.createGain()
@@ -220,12 +232,27 @@ export class AudioEngine {
 
   getChannelMap() {
     const layouts = {
+      1: ['C'],
       2: ['FL', 'FR'],
+      3: ['FL', 'FR', 'C'],
+      // 4ch assumption: quad (FL, FR, SL, SR) — FFmpeg's common 4ch layout.
+      4: ['FL', 'FR', 'SL', 'SR'],
+      5: ['FL', 'FR', 'C', 'SL', 'SR'],
       6: ['FL', 'FR', 'C', 'LFE', 'SL', 'SR'],
       8: ['FL', 'FR', 'C', 'LFE', 'SL', 'SR', 'SBL', 'SBR'],
       12: ['FL', 'FR', 'C', 'LFE', 'SL', 'SR', 'SBL', 'SBR', 'TFL', 'TFR', 'TRL', 'TRR']
     }
-    return layouts[this.channelCount] || layouts[8] || []
+    // 8 channels is ambiguous: 7.1 vs 5.1.2 — disambiguate via the ffprobe
+    // channel_layout string when available (defaults to 7.1, preserving
+    // previous behavior when no layout was captured).
+    if (this.channelCount === 8 && /5\.1\.2|tfl|tfr|top|height/i.test(this.channelLayout || '')) {
+      return CHANNEL_LAYOUTS['5.1.2'] || layouts[8]
+    }
+    if (layouts[this.channelCount]) return layouts[this.channelCount]
+    // Unknown count (e.g. 7ch 6.1/7.0 variants, 10ch, 16ch): generic per-index
+    // keys so no phantom SBL/SBR-style meters appear. Standard VU meters will
+    // read silent for these; dynamic meter rendering is future work.
+    return Array.from({ length: this.channelCount }, (_, ch) => `CH${ch}`)
   }
 
   /**

@@ -32,6 +32,14 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/renderer/index.html')
+        },
+        output: {
+          // Split the single 1.19 MB chunk so app edits stop invalidating
+          // the three/vendor hashes. Scoped to renderer — main/preload untouched.
+          manualChunks: {
+            three: ['three'],
+            vendor: ['react', 'react-dom']
+          }
         }
       }
     },

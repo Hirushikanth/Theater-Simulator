@@ -1,5 +1,5 @@
 import { ipcMain, dialog } from 'electron'
-import { readFile } from 'fs/promises'
+import { readFile, stat } from 'fs/promises'
 import { analyzeFile, decodeAudio, extractBitstream, extractTrueHDStream, readAXMLChunk, cleanupTempDir } from './ffmpeg-bridge'
 import { analyzeTrueHD, decodeTrueHD } from './truehd-bridge'
 import { extractWavChannels } from './wav-extract'
@@ -78,11 +78,20 @@ export function setupIpcHandlers() {
     }
   })
 
-  // Read file as ArrayBuffer (for bitstream parser)
+  // Read file as ArrayBuffer (for bitstream parser).
+  // Slices to the view's byte range so pooled Buffer backing stores never
+  // leak pool garbage / wrong length into DataView consumers. Refuses
+  // GB-scale files (e.g. ADM masters — use readAXMLChunk for those) instead
+  // of cloning them over IPC.
   ipcMain.handle('file:readBinary', async (_, filePath) => {
     try {
+      const MAX_READ_BINARY_BYTES = 256 * 1024 * 1024
+      const st = await stat(filePath)
+      if (st.size > MAX_READ_BINARY_BYTES) {
+        return { error: `File too large for readBinary (${st.size} bytes > ${MAX_READ_BINARY_BYTES} bytes) — use a chunked reader (e.g. file:readAXMLChunk for WAV/ADM)` }
+      }
       const buffer = await readFile(filePath)
-      return buffer.buffer
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
     } catch (err) {
       return { error: err.message }
     }

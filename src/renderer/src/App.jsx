@@ -365,7 +365,8 @@ export default function App() {
       const loadResult = await audioEngine.loadAudio(
         audioUrl,
         Math.min(audioStream.channels || 8, 8),
-        audioStream.duration
+        audioStream.duration,
+        audioStream.channelLayout || ''
       )
       setDuration(loadResult.duration)
       audioEngine.setVolume(volume)

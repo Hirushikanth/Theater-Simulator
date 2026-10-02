@@ -102,15 +102,6 @@ export function hexToRgb(hex) {
   return { r, g, b }
 }
 
-// Supported formats
-export const SUPPORTED_EXTENSIONS = [
-  '.mkv', '.mka', '.webm', '.weba',
-  '.mp4', '.mov', '.qt', '.m4a', '.m4v',
-  '.ac3', '.eac3', '.ec3',
-  '.wav',
-  '.laf'
-]
-
 // EAC3 sync word
 export const EAC3_SYNC_WORD = 0x0B77
 
