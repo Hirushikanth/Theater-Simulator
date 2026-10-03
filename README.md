@@ -33,7 +33,7 @@
 
 | Format | Metadata Source | Audio |
 |---|---|---|
-| TrueHD / MKV, MKA | DAMF (truehdd decoded) | FFmpeg 7.1 from container |
+| TrueHD / MKV, MKA, raw `.thd`/`.truehd`/`.mlp` | DAMF (truehdd decoded) | FFmpeg 7.1 from container (or the raw bitstream) |
 | E-AC-3 JOC / MP4, MKV, .eac3 | Native JOC OAMD parser | FFmpeg decode |
 | ADM BWF / .wav (≤118ch, BW64) | ADM XML (axml chunk) | Binary WAV extractor |
 | Standalone `.atmos` | DAMF (direct file) | Binary CAF fold-down (stereo WAV) |

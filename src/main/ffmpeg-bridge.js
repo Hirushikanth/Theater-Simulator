@@ -308,51 +308,6 @@ export function extractTrueHDStream(inputPath, options = {}) {
 }
 
 /**
- * Convert CAF (Core Audio Format) from truehdd to WAV for browser playback.
- * Chromium cannot play CAF natively, and also cannot handle >8 channel WAV.
- * @param {string} inputPath - Path to .atmos.audio (CAF) file
- * @param {object} options
- * @param {number} options.sampleRate - Output sample rate
- * @param {number} options.maxChannels - Channel limit for browser compat (default 8)
- */
-export function convertCAFToWAV(inputPath, options = {}) {
-  const { sampleRate = 48000, maxChannels = 8 } = options
-  const outputDir = join(tmpdir(), `atmos-viz-${randomUUID()}`)
-  const outputPath = join(outputDir, 'decoded.wav')
-
-  return new Promise((resolve, reject) => {
-    const { mkdirSync } = require('fs')
-    mkdirSync(outputDir, { recursive: true })
-
-    const args = [
-      '-y',
-      '-i', inputPath,
-      // Explicitly extract the first 8 bed channels by index using the pan filter.
-      // -ac N alone fails for non-standard channel counts because FFmpeg needs
-      // a named layout to rematrix from. The pan filter maps by channel index directly.
-      '-filter_complex',
-      `pan=7.1|c0=c0|c1=c1|c2=c2|c3=c3|c4=c4|c5=c5|c6=c6|c7=c7`,
-      '-c:a', 'pcm_s16le',
-      '-ar', String(sampleRate),
-      outputPath
-    ]
-
-    const proc = spawn(ffmpegPath, args)
-    let stderr = ''
-
-    proc.stderr.on('data', (data) => { stderr += data.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve({ outputPath, outputDir, channelCount: maxChannels })
-      } else {
-        reject(new Error(`FFmpeg CAF→WAV conversion failed (code ${code}): ${stderr.slice(-500)}`))
-      }
-    })
-    proc.on('error', (err) => reject(err))
-  })
-}
-
-/**
  * Read only the 'axml' RIFF chunk from a WAV/BW64 file.
  * This avoids loading multi-GB audio data into memory just to extract ADM XML.
  */

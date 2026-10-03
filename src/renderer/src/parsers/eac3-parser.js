@@ -757,9 +757,10 @@ class JocHeader {
 
 class ExtensibleMetadataDecoder {
   constructor () {
-    this.hasObjects  = false
-    this.oamd        = new ObjectAudioMetadata()
-    this.joc         = new JocHeader()
+    this.hasObjects   = false
+    this.oamdDecoded  = false   // OAMD payload seen in the frame just decoded
+    this.oamd         = new ObjectAudioMetadata()
+    this.joc          = new JocHeader()
   }
 
   /**
@@ -771,7 +772,8 @@ class ExtensibleMetadataDecoder {
    * @param {number} frameByteLen    frame length in bytes
    */
   decode (frameData, fullBuffer, frameByteStart, frameByteLen) {
-    this.hasObjects = false
+    this.hasObjects  = false
+    this.oamdDecoded = false
 
     // ── Scan BACKWARDS for EMDF sync word (0x5838) ────────────────────────────
     // EMDF data lives in the auxiliary data region at the END of each frame.
@@ -858,6 +860,7 @@ class ExtensibleMetadataDecoder {
 
       if (payloadID === OAMD_PAYLOAD_ID) {
         this.oamd.decode(reader, sampleOffset)
+        this.oamdDecoded = true
         this.hasObjects = true
       } else if (payloadID === JOC_PAYLOAD_ID) {
         this.joc.decode(reader)
@@ -950,33 +953,41 @@ export class EAC3Parser {
         if (decoded && emdfDecoder.hasObjects) {
           this.isAtmos = true
 
-          // Emit a keyframe for EVERY intra-frame block offset present in the
-          // OAMD payload, not just block 0. A single 32 ms EAC3 frame can
-          // encode up to 8 independent sub-block position updates.
-          //
-          // CRITICAL: blockIndex is the TRUE 0-based audio block index within
-          // the frame. Multiply by EAC3_SAMPLES_PER_BLOCK (256) to get the
-          // sample-accurate intra-frame offset, then add sampleTime (frame
-          // start in samples) before dividing by sampleRate.
-          //
-          // Previously `timecode` (raw bitfield value ≈ 0–5) was used directly,
-          // making all sub-frame timestamps round to the same millisecond.
-          const EAC3_SAMPLES_PER_BLOCK = 256   // fixed by the EAC3 standard
-          const keyframes = emdfDecoder.oamd.getAllBlockKeyframes()
-          for (const { timecode, blockIndex, objects: objs } of keyframes) {
-            const timestamp = (sampleTime + blockIndex * EAC3_SAMPLES_PER_BLOCK) / sampleRate
-            for (const obj of objs) {
-              if (obj.valid && !obj.isBed) {
-                this.objects.push({
-                  id:         obj.id,
-                  timestamp,
-                  x:          obj.x,
-                  y:          obj.y,
-                  z:          obj.z,
-                  size:       obj.size,
-                  gain:       obj.gain,
-                  confidence: 'joc-native'
-                })
+          // Only frames that actually carried an OAMD payload produce
+          // keyframes. If a frame has JOC but no OAMD, `oamd` still holds the
+          // previous frame's elements — re-emitting them would stamp identical
+          // stale positions at new timestamps and bury real motion in
+          // duplicate keyframes. Holding the last keyframe is already the
+          // lookup behaviour of getObjectsAtTime().
+          if (emdfDecoder.oamdDecoded) {
+            // Emit a keyframe for EVERY intra-frame block offset present in the
+            // OAMD payload, not just block 0. A single 32 ms EAC3 frame can
+            // encode up to 8 independent sub-block position updates.
+            //
+            // CRITICAL: blockIndex is the TRUE 0-based audio block index within
+            // the frame. Multiply by EAC3_SAMPLES_PER_BLOCK (256) to get the
+            // sample-accurate intra-frame offset, then add sampleTime (frame
+            // start in samples) before dividing by sampleRate.
+            //
+            // Previously `timecode` (raw bitfield value ≈ 0–5) was used directly,
+            // making all sub-frame timestamps round to the same millisecond.
+            const EAC3_SAMPLES_PER_BLOCK = 256   // fixed by the EAC3 standard
+            const keyframes = emdfDecoder.oamd.getAllBlockKeyframes()
+            for (const { timecode, blockIndex, objects: objs } of keyframes) {
+              const timestamp = (sampleTime + blockIndex * EAC3_SAMPLES_PER_BLOCK) / sampleRate
+              for (const obj of objs) {
+                if (obj.valid && !obj.isBed) {
+                  this.objects.push({
+                    id:         obj.id,
+                    timestamp,
+                    x:          obj.x,
+                    y:          obj.y,
+                    z:          obj.z,
+                    size:       obj.size,
+                    gain:       obj.gain,
+                    confidence: 'joc-native'
+                  })
+                }
               }
             }
           }

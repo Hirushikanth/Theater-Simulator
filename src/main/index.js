@@ -85,11 +85,22 @@ app.whenReady().then(async () => {
   })
 })
 
-// Cleanup massive temporary files when the app closes
+// Cleanup massive temporary files when the app closes.
+// The async cleanup runs once, then a normal quit is allowed to proceed so the
+// regular shutdown ordering (window teardown, session flush) is not skipped by
+// a forced app.exit().
+let shutdownCleanupDone = false
+
 app.on('before-quit', async (e) => {
+  if (shutdownCleanupDone) return
   e.preventDefault()
-  await cleanupAllTempDirs()
-  app.exit(0)
+  shutdownCleanupDone = true
+  try {
+    await cleanupAllTempDirs()
+  } catch (err) {
+    console.error('Failed to clean temp dirs on quit:', err)
+  }
+  app.quit()
 })
 
 app.on('window-all-closed', () => {

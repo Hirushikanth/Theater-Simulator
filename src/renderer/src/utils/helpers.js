@@ -2,7 +2,7 @@
  * Dolby Atmos Theater Visualizer — Helper Utilities
  */
 
-// Format time in MM:SS.ms
+// Format time in MM:SS
 export function formatTime(seconds) {
   if (!seconds || !isFinite(seconds)) return '00:00'
   const mins = Math.floor(seconds / 60)

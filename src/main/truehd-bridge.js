@@ -4,7 +4,7 @@ import { join, extname } from 'path'
 import { app } from 'electron'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import { extractTrueHDStream, convertCAFToWAV } from './ffmpeg-bridge'
+import { extractTrueHDStream } from './ffmpeg-bridge'
 
 /**
  * Locate the truehdd binary.
