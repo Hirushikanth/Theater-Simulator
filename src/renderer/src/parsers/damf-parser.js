@@ -87,13 +87,15 @@ export class DAMFParser {
       const trimmed = line.trim()
       if (!trimmed || trimmed.startsWith('#')) continue
 
-      // Detect sections
-      if (trimmed === 'channels:' || trimmed.startsWith('channels:')) {
+      // Detect sections. truehdd emits YAML *list-item* headers
+      // ("      - channels:" / "- objects:"), older writers use plain
+      // mapping keys ("channels:"), so accept both forms.
+      if (/^-?\s*channels:/.test(trimmed)) {
         inBedChannels = true
         inObjects = false
         continue
       }
-      if (trimmed === 'objects:' || trimmed.startsWith('objects:')) {
+      if (/^-?\s*objects:/.test(trimmed)) {
         inObjects = true
         inBedChannels = false
         continue

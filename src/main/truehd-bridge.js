@@ -11,16 +11,17 @@ import { extractTrueHDStream, convertCAFToWAV } from './ffmpeg-bridge'
  * Tries: bin/truehdd in project root → system PATH
  */
 function findTrueHDBinary() {
+  const exe = process.platform === 'win32' ? 'truehdd.exe' : 'truehdd'
   const localPath = app.isPackaged
-    ? join(process.resourcesPath, 'bin', 'truehdd')
-    : join(app.getAppPath(), 'bin', 'truehdd')
+    ? join(process.resourcesPath, 'bin', exe)
+    : join(app.getAppPath(), 'bin', exe)
 
   if (existsSync(localPath)) {
     return localPath
   }
 
   // Fallback to system PATH
-  return 'truehdd'
+  return exe
 }
 
 const truehddPath = findTrueHDBinary()
