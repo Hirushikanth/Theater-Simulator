@@ -44,7 +44,7 @@
 ## 🛠️ Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (>=20 <25 — 22 LTS or 24 LTS recommended, matching `engines` in `package.json`)
+- [Node.js](https://nodejs.org/) (>=22.12 <25 — 24 LTS recommended, matching `engines` in `package.json`; required by Electron 44 and electron-builder 26)
 - [npm](https://www.npmjs.com/) (on Windows, use `npm.cmd` if PowerShell blocks `npm.ps1` via ExecutionPolicy)
 - [Rust & Cargo](https://rustup.rs/) — only required if building the Professional TrueHD Decoder from source (Option B below). On Windows a source build also needs Visual Studio Build Tools with the "Desktop development with C++" workload (provides `link.exe`/`cl.exe`). The prebuilt binary path (Option A) needs no Rust.
 
