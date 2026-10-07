@@ -3,6 +3,7 @@ import { readFile, stat } from 'fs/promises'
 import { analyzeFile, decodeAudio, extractBitstream, extractTrueHDStream, readAXMLChunk, cleanupTempDir } from './ffmpeg-bridge'
 import { analyzeTrueHD, decodeTrueHD } from './truehd-bridge'
 import { extractWavChannels } from './wav-extract'
+import { extractCafAudio } from './caf-extract'
 
 export function setupIpcHandlers() {
   // Open file dialog
@@ -14,9 +15,10 @@ export function setupIpcHandlers() {
           name: 'Dolby Atmos Audio',
           extensions: [
             'mkv', 'mka', 'webm', 'weba',
-            'mp4', 'mov', 'qt', 'm4a', 'm4v',
+            'mp4', 'mov', 'qt', 'm4a', 'm4v', 'm4b',
             'ac3', 'eac3', 'ec3', 'thd', 'truehd',
-            'wav', 'laf', 'atmos'
+            'wav', 'laf', 'atmos',
+            'ogg', 'oga', 'opus', 'flac', 'mp3', 'aac'
           ]
         },
         { name: 'All Files', extensions: ['*'] }
@@ -123,6 +125,17 @@ export function setupIpcHandlers() {
   ipcMain.handle('audio:extractWavChannels', async (_, filePath, options) => {
     try {
       return await extractWavChannels(filePath, options)
+    } catch (err) {
+      return { error: err.message }
+    }
+  })
+
+  // Fold down a standalone DAMF `.atmos.audio` (CAF, 25+ discrete channels)
+  // to a small playable WAV. No FFmpeg — Chromium cannot decode CAF, and a
+  // 25-channel unknown-layout stream has no rematrix target.
+  ipcMain.handle('audio:extractCafAudio', async (_, filePath, options) => {
+    try {
+      return await extractCafAudio(filePath, options)
     } catch (err) {
       return { error: err.message }
     }

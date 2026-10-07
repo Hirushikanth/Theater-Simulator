@@ -272,12 +272,26 @@ export default function App() {
         throw new Error('No Atmos object metadata found in .atmos files')
       }
 
-      // Audio note: the companion .atmos.audio is a CAF file with all discrete
-      // channels (beds + objects = 92+ ch). FFmpeg can't rematrix this and our
-      // binary WAV extractor only handles RIFF/RF64 format, not CAF.
-      // Visualization from DAMF metadata works perfectly without audio.
-      // TODO: implement CAF binary channel extraction for audio playback.
-      console.log('[DAMF standalone] Audio playback not yet supported for multi-channel CAF. Visualization only.')
+      // Audio: the companion .atmos.audio is a CAF file with all discrete
+      // channels (beds + objects = 25+ ch). Fold every channel into a small
+      // playable WAV via the binary CAF extractor — no FFmpeg, no re-encode.
+      // If the companion file is missing or unreadable, fall back to
+      // visualization-only (the previous behaviour).
+      try {
+        const caf = await window.atmosAPI.extractCafAudio(audioPath, { outChannels: 2 })
+        if (caf && !caf.error) {
+          trackTempDir(caf.outputDir)
+          const safePath = caf.outputPath.replace(/\\/g, '/')
+          const audioUrl = `atmos://stream/?path=${encodeURIComponent(safePath)}`
+          const loadResult = await audioEngine.loadAudio(audioUrl, caf.channelCount, parser.duration)
+          setDuration(loadResult.duration)
+          audioEngine.setVolume(volume)
+        } else {
+          console.warn('[DAMF standalone] CAF audio unavailable:', caf?.error || 'no output')
+        }
+      } catch (cafErr) {
+        console.warn('[DAMF standalone] CAF audio extraction failed:', cafErr?.message || cafErr)
+      }
     } catch (err) {
       console.error('Standalone .atmos load error:', err)
       throw err
@@ -436,10 +450,15 @@ export default function App() {
           setMetadataSource('damf')
           console.log(`[TrueHD] DAMF parsed: ${parsed.objects.length} objects, ${parsed.beds.length} beds`)
         } else {
-          setMetadataSource('mat-encrypted')
+          // DAMF output exists but carries no dynamic objects (bed-only mix).
+          // Nothing to visualise — but this is not an encrypted-Atmos failure.
+          console.log('[TrueHD] DAMF contains no dynamic objects')
         }
       } else {
-        setMetadataSource('mat-encrypted')
+        // truehdd produced no .atmos/.atmos.metadata at all: the bitstream has
+        // no object metadata (plain TrueHD, e.g. a 7.1 channel check). This is
+        // not a parse failure, so it must not be labelled as encrypted Atmos.
+        console.log('[TrueHD] No DAMF output — stream carries no Atmos object metadata')
       }
 
       // Return null — let loadAnalyzedFile handle audio via FFmpeg (Step 4 below)

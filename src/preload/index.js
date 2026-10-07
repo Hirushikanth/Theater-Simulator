@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('atmosAPI', {
   extractBitstream: (filePath, options) => ipcRenderer.invoke('audio:extractBitstream', filePath, options),
   extractTrueHDStream: (filePath, options) => ipcRenderer.invoke('audio:extractTrueHDStream', filePath, options),
   extractWavChannels: (filePath, options) => ipcRenderer.invoke('audio:extractWavChannels', filePath, options),
+  extractCafAudio: (filePath, options) => ipcRenderer.invoke('audio:extractCafAudio', filePath, options),
   cleanupTemp: (dirPath) => ipcRenderer.invoke('audio:cleanupTemp', dirPath),
 
 

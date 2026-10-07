@@ -21,7 +21,7 @@
   - **Direct binary WAV/BW64 channel extraction** (no FFmpeg): overcomes the FFmpeg `pan` filter 64-channel hard limit for high-channel-count master files
   - Supports **RIFF** (≤4 GB) and **RF64/BW64** (>4 GB) formats, 16/24/32-bit PCM
 - **Native E-AC-3 JOC Parser:** Custom bit-level protocol decoder for Dolby Digital Plus Atmos streams. Extracts OAMD spatial keyframes natively from `.eac3`, `.mp4`, `.mkv`.
-- **DAMF Standalone Support:** Opens `.atmos` root files with companion `.atmos.metadata` — visualizes up to 80+ dynamic object trajectories.
+- **DAMF Standalone Support:** Opens `.atmos` root files with companion `.atmos.metadata` — visualizes up to 80+ dynamic object trajectories and plays the companion `.atmos.audio` (CAF) through a built-in binary fold-down mixer.
 - **Advanced Spatial Panning (VBAP):** Vector Base Amplitude Panning for precise per-speaker gain calculation from 3D object positions.
 - **12-Channel VU Metering:** Real-time high-resolution level metering across the full 7.1.4 speaker array.
 - **Synthetic Upmix Fallback:** Audio-reactive virtual objects for files where proprietary metadata is inaccessible (optional, can be disabled).
@@ -33,18 +33,18 @@
 
 | Format | Metadata Source | Audio |
 |---|---|---|
-| TrueHD / MKV, MKA | DAMF (truehdd decoded) | FFmpeg 7.1 from container |
+| TrueHD / MKV, MKA, raw `.thd`/`.truehd`/`.mlp` | DAMF (truehdd decoded) | FFmpeg 7.1 from container (or the raw bitstream) |
 | E-AC-3 JOC / MP4, MKV, .eac3 | Native JOC OAMD parser | FFmpeg decode |
 | ADM BWF / .wav (≤118ch, BW64) | ADM XML (axml chunk) | Binary WAV extractor |
-| Standalone `.atmos` | DAMF (direct file) | Visualization only |
-| PCM / WAV | None | Direct playback |
+| Standalone `.atmos` | DAMF (direct file) | Binary CAF fold-down (stereo WAV) |
+| PCM / WAV, FLAC, MP3, AAC/M4A, Ogg/Opus | None | FFmpeg decode |
 
 ---
 
 ## 🛠️ Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (>=20 <25 — 22 LTS or 24 LTS recommended, matching `engines` in `package.json`)
+- [Node.js](https://nodejs.org/) (>=22.12 <25 — 24 LTS recommended, matching `engines` in `package.json`; required by Electron 44 and electron-builder 26)
 - [npm](https://www.npmjs.com/) (on Windows, use `npm.cmd` if PowerShell blocks `npm.ps1` via ExecutionPolicy)
 - [Rust & Cargo](https://rustup.rs/) — only required if building the Professional TrueHD Decoder from source (Option B below). On Windows a source build also needs Visual Studio Build Tools with the "Desktop development with C++" workload (provides `link.exe`/`cl.exe`). The prebuilt binary path (Option A) needs no Rust.
 
@@ -61,13 +61,13 @@
    npm install
    ```
 
-  3. **Install the Professional TrueHD Decoder (Recommended, tested with truehdd 0.6.2):**
+  3. **Install the Professional TrueHD Decoder (Recommended, requires truehdd 0.4.0+ — tested with 0.4.0 and 0.6.2):**
 
     The application uses `truehdd` for native TrueHD Atmos DAMF extraction. Without it, TrueHD files will show a MAT-Encrypted fallback (no object visualization).
 
     **Option A — Prebuilt binary (recommended, no Rust needed):**
 
-    Download the release for your OS from the [truehdd releases page](https://github.com/truehdd/truehdd/releases) (tested with `0.6.2`; on Windows pick the `*-x86_64-pc-windows-msvc.zip` asset containing `truehdd.exe`), then place it in the project's `bin/` folder:
+    Download the release for your OS from the [truehdd releases page](https://github.com/truehdd/truehdd/releases) (tested with `0.4.0` and `0.6.2`; on Windows pick the `*-x86_64-pc-windows-msvc.zip` asset containing `truehdd.exe`), then place it in the project's `bin/` folder:
 
     ```bash
     # macOS / Linux
@@ -109,10 +109,10 @@
 
     ```bash
     ./Theater-Simulator/bin/truehdd --version   # macOS / Linux
-    .\Theater-Simulator\bin\truehdd.exe --version  # Windows (expect 0.6.2)
+    .\Theater-Simulator\bin\truehdd.exe --version  # Windows (expect 0.4.0+)
     ```
 
-    > **Note (Windows):** the app resolves `bin/truehdd.exe` — a lookup fix for the `.exe` extension (P1-11) is still pending, so even a correctly installed binary may degrade to `mat-encrypted` until that lands.
+    > **Note (Windows):** the app resolves `bin/truehdd.exe` (platform-aware lookup), so a correctly installed binary in `bin\` is found automatically.
 
 4. **Run in Development Mode:**
    ```bash
@@ -148,7 +148,8 @@
 ```
 File Opened
 ├── .atmos  → loadAtmosStandalone()
-│               └── DAMFParser (root + .atmos.metadata)
+│               ├── DAMFParser (root + .atmos.metadata) → object trajectories
+│               └── extractCafAudio → binary CAF fold-down → stereo WAV (playback)
 │
 └── Other   → analyzeFile (ffprobe)
               ├── TrueHD + Professional Decoder
@@ -180,7 +181,7 @@ File Opened
 |---|---|
 | `JOC OAMD` | Native E-AC-3 JOC bit-level parse — highest fidelity for streaming Atmos |
 | `DAMF (TrueHD Decoded)` | truehdd-decoded `.atmos.metadata` — frame-accurate object events |
-| `DAMF (Standalone)` | Direct `.atmos` file — full DAMF trajectory visualization |
+| `DAMF (Standalone)` | Direct `.atmos` file — full DAMF trajectory visualization + CAF audio fold-down |
 | `ADM XML` | ITU-R BS.2076 ADM XML — professional mastering source positions |
 | `TrueHD MAT (Parse Fallback)` | truehdd unavailable or incompatible binary |
 | `E-AC-3 (Parse Fallback)` | Encrypted/proprietary JOC payload |
@@ -199,6 +200,6 @@ File Opened
 
 ## ⚠️ Known Limitations
 
-- **Standalone `.atmos` audio:** The companion `.atmos.audio` CAF file has 92+ discrete channels in a format not yet supported for playback extraction. Visualization works fully from DAMF metadata.
+- **Standalone `.atmos` audio:** The companion `.atmos.audio` CAF file (one PCM channel per bed/object, 25+ ch, big-endian) is read natively and folded down to a stereo WAV for playback — all channels are summed at equal power, so the mix is a monitoring downmix of the master rather than a discrete render. Chromium reports `Infinity` duration for the folded WAV, so the transport uses the DAMF timeline duration.
 - **truehdd required:** TrueHD files without a compatible `bin/truehdd` (`bin/truehdd.exe` on Windows) binary will show a MAT-Encrypted fallback with no object data.
 - **E-AC-3 encryption:** Some proprietary/encrypted JOC payloads (common in Blu-ray) cannot be parsed at the bit level and will show a parse fallback.

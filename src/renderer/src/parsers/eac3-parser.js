@@ -757,9 +757,10 @@ class JocHeader {
 
 class ExtensibleMetadataDecoder {
   constructor () {
-    this.hasObjects  = false
-    this.oamd        = new ObjectAudioMetadata()
-    this.joc         = new JocHeader()
+    this.hasObjects   = false
+    this.oamdDecoded  = false   // OAMD payload seen in the frame just decoded
+    this.oamd         = new ObjectAudioMetadata()
+    this.joc          = new JocHeader()
   }
 
   /**
@@ -771,7 +772,8 @@ class ExtensibleMetadataDecoder {
    * @param {number} frameByteLen    frame length in bytes
    */
   decode (frameData, fullBuffer, frameByteStart, frameByteLen) {
-    this.hasObjects = false
+    this.hasObjects  = false
+    this.oamdDecoded = false
 
     // ── Scan BACKWARDS for EMDF sync word (0x5838) ────────────────────────────
     // EMDF data lives in the auxiliary data region at the END of each frame.
@@ -858,6 +860,7 @@ class ExtensibleMetadataDecoder {
 
       if (payloadID === OAMD_PAYLOAD_ID) {
         this.oamd.decode(reader, sampleOffset)
+        this.oamdDecoded = true
         this.hasObjects = true
       } else if (payloadID === JOC_PAYLOAD_ID) {
         this.joc.decode(reader)
@@ -950,33 +953,41 @@ export class EAC3Parser {
         if (decoded && emdfDecoder.hasObjects) {
           this.isAtmos = true
 
-          // Emit a keyframe for EVERY intra-frame block offset present in the
-          // OAMD payload, not just block 0. A single 32 ms EAC3 frame can
-          // encode up to 8 independent sub-block position updates.
-          //
-          // CRITICAL: blockIndex is the TRUE 0-based audio block index within
-          // the frame. Multiply by EAC3_SAMPLES_PER_BLOCK (256) to get the
-          // sample-accurate intra-frame offset, then add sampleTime (frame
-          // start in samples) before dividing by sampleRate.
-          //
-          // Previously `timecode` (raw bitfield value ≈ 0–5) was used directly,
-          // making all sub-frame timestamps round to the same millisecond.
-          const EAC3_SAMPLES_PER_BLOCK = 256   // fixed by the EAC3 standard
-          const keyframes = emdfDecoder.oamd.getAllBlockKeyframes()
-          for (const { timecode, blockIndex, objects: objs } of keyframes) {
-            const timestamp = (sampleTime + blockIndex * EAC3_SAMPLES_PER_BLOCK) / sampleRate
-            for (const obj of objs) {
-              if (obj.valid && !obj.isBed) {
-                this.objects.push({
-                  id:         obj.id,
-                  timestamp,
-                  x:          obj.x,
-                  y:          obj.y,
-                  z:          obj.z,
-                  size:       obj.size,
-                  gain:       obj.gain,
-                  confidence: 'joc-native'
-                })
+          // Only frames that actually carried an OAMD payload produce
+          // keyframes. If a frame has JOC but no OAMD, `oamd` still holds the
+          // previous frame's elements — re-emitting them would stamp identical
+          // stale positions at new timestamps and bury real motion in
+          // duplicate keyframes. Holding the last keyframe is already the
+          // lookup behaviour of getObjectsAtTime().
+          if (emdfDecoder.oamdDecoded) {
+            // Emit a keyframe for EVERY intra-frame block offset present in the
+            // OAMD payload, not just block 0. A single 32 ms EAC3 frame can
+            // encode up to 8 independent sub-block position updates.
+            //
+            // CRITICAL: blockIndex is the TRUE 0-based audio block index within
+            // the frame. Multiply by EAC3_SAMPLES_PER_BLOCK (256) to get the
+            // sample-accurate intra-frame offset, then add sampleTime (frame
+            // start in samples) before dividing by sampleRate.
+            //
+            // Previously `timecode` (raw bitfield value ≈ 0–5) was used directly,
+            // making all sub-frame timestamps round to the same millisecond.
+            const EAC3_SAMPLES_PER_BLOCK = 256   // fixed by the EAC3 standard
+            const keyframes = emdfDecoder.oamd.getAllBlockKeyframes()
+            for (const { timecode, blockIndex, objects: objs } of keyframes) {
+              const timestamp = (sampleTime + blockIndex * EAC3_SAMPLES_PER_BLOCK) / sampleRate
+              for (const obj of objs) {
+                if (obj.valid && !obj.isBed) {
+                  this.objects.push({
+                    id:         obj.id,
+                    timestamp,
+                    x:          obj.x,
+                    y:          obj.y,
+                    z:          obj.z,
+                    size:       obj.size,
+                    gain:       obj.gain,
+                    confidence: 'joc-native'
+                  })
+                }
               }
             }
           }
@@ -991,6 +1002,7 @@ export class EAC3Parser {
     }
 
     this.totalDuration = sampleTime / this.sampleRate
+    this._dropOriginParkedObjects()
 
     return {
       sampleRate:   this.sampleRate,
@@ -1000,6 +1012,41 @@ export class EAC3Parser {
       objectCount:  emdfDecoder.oamd.objectCount,
       objects:      this.objects
     }
+  }
+
+  /**
+   * Drop placeholder objects parked at the room origin for their entire
+   * duration.
+   *
+   * JOC encoders pad the object table with inactive placeholders that keep
+   * reporting the same `(0, 0, 0)` position from first to last frame — e.g.
+   * 14 of 15 objects in a channel-check signal, or 6 of 15 in a 7.1.4 clip.
+   * Rendering them stacks a pile of static spheres in the front-left floor
+   * corner.
+   *
+   * A position check alone is not enough: `(0, 0, 0)` is also the front-left
+   * speaker, and real objects there still receive sub-grid updates (Dolby's
+   * ChID signal moves each of its 15 objects 16-80 times). So an object is
+   * only considered parked when *every* keyframe it emitted is exactly at the
+   * origin. If that would remove every object in the stream, the filter backs
+   * off and keeps them — better to show something than an empty scene.
+   */
+  _dropOriginParkedObjects () {
+    const atOrigin = new Set()
+    const moved = new Set()
+    for (const o of this.objects) {
+      if (o.x === 0 && o.y === 0 && o.z === 0) atOrigin.add(o.id)
+      else moved.add(o.id)
+    }
+    const parked = [...atOrigin].filter(id => !moved.has(id))
+    if (parked.length === 0 || moved.size === 0) return
+
+    const parkedSet = new Set(parked)
+    this.objects = this.objects.filter(o => !parkedSet.has(o.id))
+    console.log(
+      `[JOC] Filtered ${parked.length} placeholder object(s) parked at ` +
+      `(0,0,0) — kept ${moved.size}`
+    )
   }
 
   /**

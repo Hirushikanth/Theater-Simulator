@@ -4,23 +4,24 @@ import { join, extname } from 'path'
 import { app } from 'electron'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
-import { extractTrueHDStream, convertCAFToWAV } from './ffmpeg-bridge'
+import { extractTrueHDStream } from './ffmpeg-bridge'
 
 /**
  * Locate the truehdd binary.
  * Tries: bin/truehdd in project root → system PATH
  */
 function findTrueHDBinary() {
+  const exe = process.platform === 'win32' ? 'truehdd.exe' : 'truehdd'
   const localPath = app.isPackaged
-    ? join(process.resourcesPath, 'bin', 'truehdd')
-    : join(app.getAppPath(), 'bin', 'truehdd')
+    ? join(process.resourcesPath, 'bin', exe)
+    : join(app.getAppPath(), 'bin', exe)
 
   if (existsSync(localPath)) {
     return localPath
   }
 
   // Fallback to system PATH
-  return 'truehdd'
+  return exe
 }
 
 const truehddPath = findTrueHDBinary()

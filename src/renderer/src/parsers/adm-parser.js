@@ -211,29 +211,42 @@ export class ADMParser {
    *   → audioChannelFormat → audioBlockFormat
    */
   _extractObjectPositionsViaRefs(objectElement, packFormatMap, channelFormatMap) {
+    // Strict pass: only channels explicitly typed as Objects. ADM beds are
+    // DirectSpeakers and must not become spheres.
+    const strict = this._collectObjectPositions(objectElement, packFormatMap, channelFormatMap, true)
+    if (strict.length > 0) return strict
+
+    // Relaxed pass for non-conformant XML that omits typeDefinition: take
+    // every channel that is not explicitly a bed rather than reporting no
+    // objects at all.
+    return this._collectObjectPositions(objectElement, packFormatMap, channelFormatMap, false)
+  }
+
+  /**
+   * Collect block-format positions from the channels referenced by an object.
+   *
+   * @param {boolean} requireObjectType  true → only Object-typed channels;
+   *                                     false → everything except DirectSpeakers
+   */
+  _collectObjectPositions(objectElement, packFormatMap, channelFormatMap, requireObjectType) {
     const positions = []
 
-    // Get pack format references from this object
-    const packRefs = objectElement.querySelectorAll('audioPackFormatIDRef')
-
-    for (const packRef of packRefs) {
+    for (const packRef of objectElement.querySelectorAll('audioPackFormatIDRef')) {
       const packId = packRef.textContent.trim()
       const channelRefs = packFormatMap.get(packId)
       if (!channelRefs) continue
 
-      // Resolve channel format references
       const resolvedChannelIds = this._resolveChannelRefs(channelRefs, packFormatMap)
 
       for (const channelId of resolvedChannelIds) {
         const channelData = channelFormatMap.get(channelId)
         if (!channelData) continue
 
-        // Only process object-type channels (type definition 0003)
-        // Type codes: 0001=DirectSpeakers, 0002=Matrix, 0003=Objects, 0004=HOA
-        const isObjectType = channelId.includes('0003') ||
-                             channelData.name?.toLowerCase().includes('object')
+        const kind = this._channelKind(channelData)
 
-        // If we can't determine type, include it anyway (better to show extra than miss objects)
+        if (requireObjectType && kind !== 'objects') continue
+        if (!requireObjectType && kind === 'directspeakers') continue
+
         for (const bf of channelData.blockFormats) {
           const pos = this._parseBlockFormat(bf)
           if (pos) positions.push(pos)
@@ -242,6 +255,23 @@ export class ADMParser {
     }
 
     return positions
+  }
+
+  /**
+   * Classify an audioChannelFormat: 'objects' | 'directspeakers' | 'unknown'.
+   * BS.2076 typeDefinition is authoritative; typeLabel 0003 = Objects,
+   * 0001 = DirectSpeakers. The ID substring is NOT reliable — a bed channel
+   * can legitimately be numbered …_0003 (e.g. the centre speaker).
+   */
+  _channelKind(channelData) {
+    const el = channelData.element
+    const typeDef = (el?.getAttribute?.('typeDefinition') || '').toLowerCase()
+    if (typeDef) return typeDef.includes('object') ? 'objects'
+      : (typeDef.includes('directspeaker') ? 'directspeakers' : 'unknown')
+    const typeLabel = (el?.getAttribute?.('typeLabel') || '').trim()
+    if (typeLabel === '0003') return 'objects'
+    if (typeLabel === '0001') return 'directspeakers'
+    return (channelData.name || '').toLowerCase().includes('object') ? 'objects' : 'unknown'
   }
 
   /**
@@ -352,10 +382,17 @@ export class ADMParser {
    */
   _extractFromChannelFormats(doc, channelFormatMap) {
     let objIndex = 0
+    const channels = Array.from(channelFormatMap.entries())
 
-    for (const [cfId, channelData] of channelFormatMap) {
-      // Only process object-type channels (type 0003)
-      if (!cfId.includes('0003') && !channelData.name?.toLowerCase().includes('object')) continue
+    // Prefer channels explicitly typed as Objects; if the XML omits type
+    // information entirely, fall back to anything that is not a bed.
+    const hasTypedObjects = channels.some(([, cd]) => this._channelKind(cd) === 'objects')
+    const accept = (cd) => hasTypedObjects
+      ? this._channelKind(cd) === 'objects'
+      : this._channelKind(cd) !== 'directspeakers'
+
+    for (const [cfId, channelData] of channels) {
+      if (!accept(channelData)) continue
 
       const positions = []
       for (const bf of channelData.blockFormats) {

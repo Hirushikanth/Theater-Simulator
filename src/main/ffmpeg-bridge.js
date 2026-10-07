@@ -118,27 +118,18 @@ export function detectAtmos(stream) {
   const codec = stream.codec_name || ''
   const profile = (stream.profile || '').toLowerCase()
   const codecLong = (stream.codec_long_name || '').toLowerCase()
-  const codecTag = (stream.codec_tag_string || '').toLowerCase()
-  const channels = stream.channels || 0
-  const layout = (stream.channel_layout || '').toLowerCase()
-  const bitRate = parseInt(stream.bit_rate) || 0
-  // FFmpeg's own long name already flags Atmos when its decoder sees JOC
-  // (e.g. "Dolby Digital Plus + Dolby Atmos") — trust it when present.
-  if (codecLong.includes('atmos')) return true
-  // EAC3 with Atmos profile or high channel count
-  if (codec === 'eac3' && (profile.includes('atmos') || channels > 6)) return true
-  // 5.1-channel E-AC-3 JOC music (e.g. 6ch / 5.1(side) / ~768kbps / ec-3 tag
-  // with no profile in ffprobe JSON) is an Atmos candidate — the JOC parser
-  // confirms it post-parse. Plain 5.1 DD+ without JOC may badge as a
-  // candidate here, but objects only appear on parse success.
-  if (
-    codec === 'eac3' && channels === 6 &&
-    (codecTag === 'ec-3' || (layout.includes('5.1') && bitRate >= 384000))
-  ) return true
-  // TrueHD Atmos - often not explicitly labeled, so we treat 8+ channels as candidates
-  if (codec === 'truehd' && (profile.includes('atmos') || channels >= 8)) return true
+  // FFmpeg labels a stream as Atmos only when its parser actually sees the
+  // object extension — "Dolby Digital Plus + Dolby Atmos" / "Dolby TrueHD +
+  // Dolby Atmos". This is the reliable pre-parse signal.
+  if (codecLong.includes('atmos') || profile.includes('atmos')) return true
   // AC4 usually implies Atmos
   if (codec === 'ac4') return true
+  // Deliberately no channel-count / codec-tag / bitrate heuristics: plain
+  // 7.1 DD+ and non-Atmos TrueHD 7.1 share those properties, and flagging
+  // them produced a misleading "E-AC-3 (Parse Fallback)" Atmos warning for
+  // channel-based content. The JOC/DAMF parsers are the ground truth — when
+  // a stream has object metadata, App.jsx upgrades the badge on parse
+  // success even if this pre-hint missed it.
   return false
 }
 
@@ -310,51 +301,6 @@ export function extractTrueHDStream(inputPath, options = {}) {
         resolve({ outputPath, outputDir })
       } else {
         reject(new Error(`FFmpeg TrueHD extraction failed (code ${code}): ${stderr.slice(-500)}`))
-      }
-    })
-    proc.on('error', (err) => reject(err))
-  })
-}
-
-/**
- * Convert CAF (Core Audio Format) from truehdd to WAV for browser playback.
- * Chromium cannot play CAF natively, and also cannot handle >8 channel WAV.
- * @param {string} inputPath - Path to .atmos.audio (CAF) file
- * @param {object} options
- * @param {number} options.sampleRate - Output sample rate
- * @param {number} options.maxChannels - Channel limit for browser compat (default 8)
- */
-export function convertCAFToWAV(inputPath, options = {}) {
-  const { sampleRate = 48000, maxChannels = 8 } = options
-  const outputDir = join(tmpdir(), `atmos-viz-${randomUUID()}`)
-  const outputPath = join(outputDir, 'decoded.wav')
-
-  return new Promise((resolve, reject) => {
-    const { mkdirSync } = require('fs')
-    mkdirSync(outputDir, { recursive: true })
-
-    const args = [
-      '-y',
-      '-i', inputPath,
-      // Explicitly extract the first 8 bed channels by index using the pan filter.
-      // -ac N alone fails for non-standard channel counts because FFmpeg needs
-      // a named layout to rematrix from. The pan filter maps by channel index directly.
-      '-filter_complex',
-      `pan=7.1|c0=c0|c1=c1|c2=c2|c3=c3|c4=c4|c5=c5|c6=c6|c7=c7`,
-      '-c:a', 'pcm_s16le',
-      '-ar', String(sampleRate),
-      outputPath
-    ]
-
-    const proc = spawn(ffmpegPath, args)
-    let stderr = ''
-
-    proc.stderr.on('data', (data) => { stderr += data.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve({ outputPath, outputDir, channelCount: maxChannels })
-      } else {
-        reject(new Error(`FFmpeg CAF→WAV conversion failed (code ${code}): ${stderr.slice(-500)}`))
       }
     })
     proc.on('error', (err) => reject(err))
