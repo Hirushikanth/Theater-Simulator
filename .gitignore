@@ -66,3 +66,6 @@ atmos-viz-*/
 *.swo
 .sublime-project
 .sublime-workspace
+
+# Media Files for testing
+test-assets/
