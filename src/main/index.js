@@ -1,5 +1,6 @@
 import { app, BrowserWindow, protocol, net } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { setupIpcHandlers } from './ipc-handlers'
 import { cleanupAllTempDirs } from './ffmpeg-bridge'
@@ -20,6 +21,42 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow = null
+
+// Extensions the app can open (mirrors the Open dialog filter + raw TrueHD).
+const OPENABLE_EXTS = [
+  'mkv', 'mka', 'webm', 'weba',
+  'mp4', 'mov', 'qt', 'm4a', 'm4v', 'm4b',
+  'ac3', 'eac3', 'ec3', 'thd', 'truehd', 'mlp',
+  'wav', 'laf', 'atmos',
+  'ogg', 'oga', 'opus', 'flac', 'mp3', 'aac'
+]
+
+let pendingOpenPath = null
+
+function isOpenableFile(p) {
+  if (!p || typeof p !== 'string' || p.startsWith('-')) return false
+  const lower = p.toLowerCase()
+  return existsSync(p) && OPENABLE_EXTS.some((ext) => lower.endsWith(`.${ext}`))
+}
+
+// Deliver an OS-requested file to the renderer (double-click, Open With,
+// `open <file> -a`, CLI argument). Before the window exists, park it.
+function dispatchOpenFile(filePath) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    mainWindow.webContents.send('app:open-file', filePath)
+  } else {
+    pendingOpenPath = filePath
+  }
+}
+
+// macOS double-click / Open With. Registered before ready — the event can
+// arrive during launch, before any window exists (hence pendingOpenPath).
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  dispatchOpenFile(filePath)
+})
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -79,6 +116,18 @@ app.whenReady().then(async () => {
 
   setupIpcHandlers()
   createWindow()
+
+  // CLI / cold-start file argument. `open-file` above takes precedence when
+  // the OS delivers the path as an event instead of an argument.
+  if (!pendingOpenPath) {
+    const argvFile = process.argv.find(isOpenableFile)
+    if (argvFile) pendingOpenPath = argvFile
+  }
+  if (pendingOpenPath && mainWindow && !mainWindow.isDestroyed()) {
+    const pending = pendingOpenPath
+    pendingOpenPath = null
+    mainWindow.webContents.once('did-finish-load', () => dispatchOpenFile(pending))
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

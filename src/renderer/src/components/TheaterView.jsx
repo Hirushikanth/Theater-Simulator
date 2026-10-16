@@ -90,7 +90,7 @@ const TheaterView = forwardRef(function TheaterView (
           <div className="theater-hud theater-hud-active">
             {metadataSource === 'joc' ? 'E-AC-3 JOC' :
              metadataSource === 'adm' ? 'ADM BWF' :
-             metadataSource === 'damf' ? 'DAMF' : 'Unknown'} Metadata
+             (metadataSource === 'damf' || metadataSource === 'damf-standalone') ? 'DAMF' : 'Unknown'} Metadata
             &nbsp;|&nbsp; {activeCount} Object{activeCount !== 1 ? 's' : ''}
           </div>
         )}

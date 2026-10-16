@@ -49,6 +49,8 @@ export default function App() {
   // Track the active temp dirs so we don't delete them while playing!
   const activeTempDirsRef  = useRef([])
   const streamSelectionRef = useRef(null)
+  // Latest loadFile for the OS open-file subscription below (avoids a stale closure)
+  const loadFileRef = useRef(null)
 
   const updateLoop = useCallback(() => {
     if (!audioEngine.isPlaying) return
@@ -111,7 +113,13 @@ export default function App() {
       vuMeterEngine.stop()
     }
 
+    // OS-requested file (double-click / Open With / `open -a` / CLI arg)
+    const unsubscribeOpenFile = window.atmosAPI?.onOpenFile?.((filePath) => {
+      loadFileRef.current?.(filePath)
+    })
+
     return () => {
+      unsubscribeOpenFile?.()
       audioEngine.destroy()
       vuMeterEngine.stop()
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
@@ -222,6 +230,9 @@ export default function App() {
       setIsLoading(false)
     }
   }, [volume, enableSyntheticUpmix, useProfessionalDecoder])
+
+  // Keep the OS open-file subscription pointed at the latest loadFile
+  loadFileRef.current = loadFile
 
   /**
    * Load a standalone .atmos file (DAMF root).

@@ -1,0 +1,38 @@
+name: Bug report
+description: Something broke while opening or playing a file
+title: "[bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: e.g. 1.0.0 (DMG) or commit hash for dev builds
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: How did you launch the file?
+      options: [Open File dialog, Drag & drop, Double-click / Open With]
+  - type: textarea
+    id: file
+    attributes:
+      label: File details
+      description: Container/codec/channels (e.g. .m2ts TrueHD 7.1, .mkv E-AC-3 JOC 5.1). No copyrighted media uploads.
+      placeholder: What did you open?
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: What happened?
+      description: Error text, METADATA chip state, screenshots welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Terminal output (dev) or Console.app lines for the app.
+      render: shell

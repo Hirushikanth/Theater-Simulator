@@ -16,6 +16,14 @@ contextBridge.exposeInMainWorld('atmosAPI', {
   readText: (filePath) => ipcRenderer.invoke('file:readText', filePath),
   readAXMLChunk: (filePath) => ipcRenderer.invoke('file:readAXMLChunk', filePath),
 
+  // OS-requested file open (double-click / Open With / `open -a` / CLI arg).
+  // Returns an unsubscribe function.
+  onOpenFile: (callback) => {
+    const listener = (_event, filePath) => callback(filePath)
+    ipcRenderer.on('app:open-file', listener)
+    return () => ipcRenderer.removeListener('app:open-file', listener)
+  },
+
   // Audio pipeline
   analyzeFile: (filePath) => ipcRenderer.invoke('audio:analyze', filePath),
   decodeAudio: (filePath, options) => ipcRenderer.invoke('audio:decode', filePath, options),

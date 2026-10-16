@@ -1,9 +1,30 @@
 # Atmos Theater Visualizer 🎬
 
+![macOS arm64](https://img.shields.io/badge/macOS-arm64-black?logo=apple)
+![version](https://img.shields.io/badge/version-1.0.0-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+[![download](https://img.shields.io/badge/download-releases-purple)](https://github.com/Hirushikanth/Theater-Simulator/releases/latest)
+
 **Atmos Theater Visualizer** is a professional-grade, Electron-based desktop application for real-time decoding, parsing, and 3D spatial visualization of Dolby Atmos audio across all major formats — including native TrueHD DAMF, ADM BWF, and E-AC-3 JOC streams.
 
 > [!IMPORTANT]
 > **LEGAL NOTICE & USAGE:** This is an **unofficial** Dolby Atmos object viewer developed strictly for **educational and individual use**. It is not affiliated with, endorsed by, or licensed by Dolby Laboratories.
+
+---
+
+## 📸 Screenshots
+
+E-AC-3 JOC object tracking (8 live objects, per-object positions):
+
+![E-AC-3 JOC visualization](docs/screenshots/joc-atmos.png)
+
+Standalone DAMF master (10 beds + 15 objects, binary CAF fold-down audio):
+
+![Standalone DAMF visualization](docs/screenshots/damf-standalone.png)
+
+ADM Broadcast Wave (12-channel master, 2 animated objects):
+
+![ADM BWF visualization](docs/screenshots/adm-bwf.png)
 
 ---
 
@@ -42,6 +63,19 @@
 ---
 
 ## 🛠️ Getting Started
+
+### Download (recommended)
+
+Grab the latest `Atmos Theater Visualizer-*-arm64.dmg` (or `.zip`) from
+[GitHub Releases](https://github.com/Hirushikanth/Theater-Simulator/releases/latest),
+drag the app to **Applications**, and launch it. FFmpeg/ffprobe and truehdd are
+bundled — no setup needed.
+
+> **First launch:** the build is Developer-ID signed but not notarized, so macOS
+> may block it. Right-click the app → **Open** → **Open** once; afterwards it
+> launches normally.
+
+### Build from source
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) (>=22.12 <25 — 24 LTS recommended, matching `engines` in `package.json`; required by Electron 44 and electron-builder 26)
@@ -133,11 +167,14 @@
 
 ## 🖱️ How to Use
 
-1. **Launch the App** (`npm run dev`)
+1. **Launch the App** (installed build or `npm run dev`)
 2. **Enable Professional Decoder** in the top bar (requires `bin/truehdd` on macOS/Linux, `bin/truehdd.exe` on Windows)
-3. **Click Open File** — supported formats are listed above
+3. **Load audio** — any of these:
+   - **Click Open File** — supported formats are listed above
+   - **Drag & drop** a file onto the window
+   - **Double-click** a media file / right-click → **Open With** (file associations are registered by the installer)
 4. **Watch the terminal** for real-time decode progress (truehdd frame count, wav-extract stats, etc.)
-5. **Hit Play** and watch the Atmos objects move through the 3D theater in sync with the audio
+5. **Hit Play** (or press `Space`) and watch the Atmos objects move through the 3D theater in sync with the audio
 
 > **Tip:** Objects activate a few seconds into TrueHD content — this reflects the real DAMF event timeline where objects start inactive and transition to active positions.
 
@@ -203,3 +240,20 @@ File Opened
 - **Standalone `.atmos` audio:** The companion `.atmos.audio` CAF file (one PCM channel per bed/object, 25+ ch, big-endian) is read natively and folded down to a stereo WAV for playback — all channels are summed at equal power, so the mix is a monitoring downmix of the master rather than a discrete render. Chromium reports `Infinity` duration for the folded WAV, so the transport uses the DAMF timeline duration.
 - **truehdd required:** TrueHD files without a compatible `bin/truehdd` (`bin/truehdd.exe` on Windows) binary will show a MAT-Encrypted fallback with no object data.
 - **E-AC-3 encryption:** Some proprietary/encrypted JOC payloads (common in Blu-ray) cannot be parsed at the bit level and will show a parse fallback.
+
+---
+
+## 🩺 Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| macOS blocks the app on first launch | Right-click → **Open** → **Open** (signed, not notarized) |
+| `ffprobe error: spawn ffprobe ENOENT` on file open | Fixed in v1.0.0 (bundled native ffprobe + GUI-safe PATH search). On older builds, launch from a terminal or `brew install ffmpeg` as a workaround |
+| TrueHD shows MAT fallback, no objects | Install `bin/truehdd` (see setup step 3) and enable **Professional Decoder** |
+| No objects on a known-Atmos file | Check the METADATA chip: `JOC ⚠` / `MAT ⚠` means an encrypted payload the parser can't read; try another sample |
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).

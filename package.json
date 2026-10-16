@@ -35,6 +35,19 @@
         ]
       }
     ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "mkv", "mka", "webm", "weba",
+          "mp4", "mov", "qt", "m4a", "m4v", "m4b",
+          "ac3", "eac3", "ec3", "thd", "truehd", "mlp",
+          "wav", "laf", "atmos",
+          "ogg", "oga", "opus", "flac", "mp3", "aac"
+        ],
+        "name": "Dolby Atmos Audio",
+        "role": "Viewer"
+      }
+    ],
     "mac": {
       "target": [
         "dmg",
