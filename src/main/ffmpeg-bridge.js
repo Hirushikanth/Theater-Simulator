@@ -1,63 +1,16 @@
-import { spawn, execFile, execFileSync } from 'child_process'
-import { existsSync } from 'fs'
+import { spawn, execFile } from 'child_process'
 import { join, extname } from 'path'
 import { app } from 'electron'
 import { tmpdir } from 'os'
 import { randomUUID } from 'crypto'
+import { resolveBinary } from './bin-resolve'
 
-/**
- * Check that a binary actually executes on this machine.
- * Catches mislabeled-arch bundles (e.g. ffprobe-static's darwin/arm64
- * binary is really x86_64 → spawn fails with EBADARCH / error -86
- * "bad CPU type in executable" when Rosetta is not installed).
- */
-function binaryWorks(binPath) {
-  try {
-    execFileSync(binPath, ['-version'], { stdio: 'ignore', timeout: 8000 })
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Locate ffmpeg/ffprobe binary.
- * Tries: bundled ffmpeg-static → system PATH.
- * Verifies the bundled binary actually runs before using it, so a
- * wrong-arch bundle falls back to a working system install instead of
- * failing later with "spawn Unknown system error -86".
- */
-function findBinary(name) {
-  try {
-    let staticPath;
-    if (name === 'ffmpeg') {
-      staticPath = require('ffmpeg-static')
-    } else if (name === 'ffprobe') {
-      staticPath = require('ffprobe-static').path
-    }
-
-    if (staticPath && existsSync(staticPath)) {
-      if (binaryWorks(staticPath)) {
-        return app.isPackaged
-          ? staticPath.replace('app.asar', 'app.asar.unpacked')
-          : staticPath
-      }
-      console.warn(
-        `[ffmpeg-bridge] Bundled ${name} at ${staticPath} exists but does not execute ` +
-        `(likely wrong CPU arch — install Rosetta or a native ${name} e.g. 'brew install ffmpeg'). ` +
-        `Falling back to system PATH.`
-      )
-    }
-  } catch (err) {
-    console.error(`Failed to resolve ${name}-static:`, err)
-  }
-
-  // Fallback to system PATH
-  return name
-}
-
-const ffmpegPath = findBinary('ffmpeg')
-const ffprobePath = findBinary('ffprobe')
+// Binary locations: newest working candidate wins (bundled static vs system).
+// See bin-resolve.js — this survives the old failure mode where a broken
+// bundled binary degraded to a bare 'ffprobe' that Finder-launched apps
+// cannot resolve (sparse PATH → spawn ENOENT on every file open).
+const ffmpegPath = resolveBinary('ffmpeg', { isPackaged: app.isPackaged })
+const ffprobePath = resolveBinary('ffprobe', { isPackaged: app.isPackaged })
 
 /**
  * Run ffprobe and return JSON stream/format info

@@ -2,6 +2,8 @@
   "name": "dolby-atmos-theater-visualizer",
   "version": "1.0.0",
   "description": "Professional Dolby Atmos Theater Visualizer with real-time spatial object rendering",
+  "author": "Hirushikanth",
+  "license": "MIT",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -22,7 +24,7 @@
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**",
-      "node_modules/ffprobe-static/**"
+      "node_modules/@ffprobe-installer/**"
     ],
     "extraResources": [
       {
@@ -59,8 +61,8 @@
     "@electron/get": "^5.1.0"
   },
   "dependencies": {
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "ffmpeg-static": "^5.3.0",
-    "ffprobe-static": "^3.1.0",
     "three": "^0.170.0"
   },
   "devDependencies": {
