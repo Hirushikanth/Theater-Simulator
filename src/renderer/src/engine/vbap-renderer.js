@@ -95,17 +95,19 @@ export class VBAPRenderer {
     const gains = new Map()
     SPEAKERS.forEach(s => gains.set(s.id, 0))
 
-    // Convert Atmos coordinates to unit vector
-    // Map from normalized 0-1 to 3D space
-    const azimuth = (x - 0.5) * Math.PI  // -π/2 to π/2
-    const elevation = z * (Math.PI / 2)    // 0 to π/2
-    const frontBack = (y - 0.5) * Math.PI  // -π/2 to π/2
+    // Convert Atmos coordinates to unit vector.
+    // x/y are the horizontal plane (y: front→back), z is height.
+    // Azimuth must span the full circle so the rear hemisphere is reachable;
+    // the previous x-only mapping locked every source to z ≤ 0, leaving the
+    // rear speakers (SBL/SBR) with zero gain for every object position.
+    const azimuth = Math.atan2(x - 0.5, 0.5 - y)  // 0 = front, + = right, ±π = back
+    const elevation = z * (Math.PI / 2)          // 0 = floor, π/2 = ceiling
 
-    // Create source direction vector
+    // Create source direction vector (matches speakerToCartesian's basis)
     const srcVec = [
       Math.cos(elevation) * Math.sin(azimuth),
       Math.sin(elevation),
-      -Math.cos(elevation) * Math.cos(frontBack)
+      -Math.cos(elevation) * Math.cos(azimuth)
     ]
 
     // Normalize
