@@ -1,33 +1,29 @@
 import React, { useEffect, useRef } from 'react'
-import { SPEAKERS } from '../utils/constants'
+import { DEFAULT_LAYOUT } from '../utils/layouts'
 import { dbToPercent } from '../utils/helpers'
 
-const METER_LAYOUT = [
-  { id: 'FL',  label: 'FL' },
-  { id: 'C',   label: 'C' },
-  { id: 'LFE', label: 'LFE' },
-  { id: 'FR',  label: 'FR' },
-  { id: 'SL',  label: 'SL' },
-  { id: 'SR',  label: 'SR' },
-  { id: 'SBL', label: 'SBL' },
-  { id: 'SBR', label: 'SBR' },
-  { id: 'TFL', label: 'TFL' },
-  { id: 'TFR', label: 'TFR' },
-  { id: 'TRL', label: 'TRL' },
-  { id: 'TRR', label: 'TRR' }
-]
+const DEFAULT_COLOR = '#00ffd5'
 
-export default function ChannelMeters({ vuMeterEngine, isPlaying }) {
+export default function ChannelMeters({ vuMeterEngine, isPlaying, layout = DEFAULT_LAYOUT }) {
   const barsRef = useRef(new Map())
   const peaksRef = useRef(new Map())
   const labelsRef = useRef(new Map())
   const rafRef = useRef()
 
+  const speakers = layout.meterOrder
+    .map(id => layout.speakerById.get(id))
+    .filter(Boolean)
+
+  const columns = speakers.length <= 12
+    ? Math.max(1, speakers.length)
+    : Math.ceil(speakers.length / 2)
+  const barHeight = speakers.length > 12 ? 92 : 120
+
   // High-performance direct DOM mutation loop
   useEffect(() => {
     if (!isPlaying) {
       // Reset meters when stopped
-      METER_LAYOUT.forEach(({ id }) => {
+      speakers.forEach(({ id }) => {
         const bar = barsRef.current.get(id)
         const peak = peaksRef.current.get(id)
         const label = labelsRef.current.get(id)
@@ -44,18 +40,18 @@ export default function ChannelMeters({ vuMeterEngine, isPlaying }) {
     const updateMeters = () => {
       const levels = vuMeterEngine.getLevels()
 
-      METER_LAYOUT.forEach(({ id }) => {
+      speakers.forEach(({ id, color }) => {
         const db = levels.get(id) ?? -100
         const percent = dbToPercent(db, -60, 0)
-        
+
         const bar = barsRef.current.get(id)
         const peak = peaksRef.current.get(id)
         const label = labelsRef.current.get(id)
-        const speaker = SPEAKERS.find(s => s.id === id)
+        const speakerColor = color || DEFAULT_COLOR
 
         if (bar) {
           bar.style.height = `${percent}%`
-          bar.style.boxShadow = percent > 50 ? `0 0 8px ${speaker.color}44` : 'none'
+          bar.style.boxShadow = percent > 50 ? `0 0 8px ${speakerColor}44` : 'none'
         }
         if (peak) {
           peak.style.bottom = `${Math.min(100, percent + 2)}%`
@@ -79,40 +75,54 @@ export default function ChannelMeters({ vuMeterEngine, isPlaying }) {
         cancelAnimationFrame(rafRef.current)
       }
     }
-  }, [isPlaying, vuMeterEngine])
+  }, [isPlaying, vuMeterEngine, layout])
 
   return (
     <div className="panel">
       <div className="panel-header">
         <span className="panel-title">Spatial Energy Monitor</span>
-        <span className="panel-badge badge-codec">7.1.4</span>
+        <span className="panel-badge badge-codec">{layout.label}</span>
       </div>
       <div className="meters-container">
-        <div className="meters-grid">
-          {METER_LAYOUT.map((meter) => {
-            const speaker = SPEAKERS.find(s => s.id === meter.id)
-            return (
-              <div key={meter.id} className="meter">
-                <div className="meter-bar-container">
-                  <div
-                    ref={el => barsRef.current.set(meter.id, el)}
-                    className="meter-bar"
-                    style={{ 
-                      background: `linear-gradient(to top, ${speaker?.color}33, ${speaker?.color})`, 
-                      height: '0%' 
-                    }}
-                  />
-                  <div
-                    ref={el => peaksRef.current.set(meter.id, el)}
-                    className="meter-peak"
-                    style={{ backgroundColor: speaker?.color, opacity: 0 }}
-                  />
-                </div>
-                <span className="meter-label">{meter.label}</span>
-                <span ref={el => labelsRef.current.set(meter.id, el)} className="meter-db">—</span>
+        <div
+          className="meters-grid"
+          style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}
+        >
+          {speakers.map((speaker) => (
+            <div key={speaker.id} className="meter" title={speaker.name}>
+              <div className="meter-bar-container" style={{ height: `${barHeight}px` }}>
+                <div
+                  ref={el => {
+                    if (el) barsRef.current.set(speaker.id, el)
+                    else barsRef.current.delete(speaker.id)
+                  }}
+                  className="meter-bar"
+                  style={{
+                    background: `linear-gradient(to top, ${speaker.color}33, ${speaker.color})`,
+                    height: '0%'
+                  }}
+                />
+                <div
+                  ref={el => {
+                    if (el) peaksRef.current.set(speaker.id, el)
+                    else peaksRef.current.delete(speaker.id)
+                  }}
+                  className="meter-peak"
+                  style={{ backgroundColor: speaker.color, opacity: 0 }}
+                />
               </div>
-            )
-          })}
+              <span className="meter-label">{speaker.label}</span>
+              <span
+                ref={el => {
+                  if (el) labelsRef.current.set(speaker.id, el)
+                  else labelsRef.current.delete(speaker.id)
+                }}
+                className="meter-db"
+              >
+                —
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

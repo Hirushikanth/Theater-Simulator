@@ -43,8 +43,9 @@ ADM Broadcast Wave (12-channel master, 2 animated objects):
   - Supports **RIFF** (≤4 GB) and **RF64/BW64** (>4 GB) formats, 16/24/32-bit PCM
 - **Native E-AC-3 JOC Parser:** Custom bit-level protocol decoder for Dolby Digital Plus Atmos streams. Extracts OAMD spatial keyframes natively from `.eac3`, `.mp4`, `.mkv`.
 - **DAMF Standalone Support:** Opens `.atmos` root files with companion `.atmos.metadata` — visualizes up to 80+ dynamic object trajectories and plays the companion `.atmos.audio` (CAF) through a built-in binary fold-down mixer.
-- **Advanced Spatial Panning (VBAP):** Vector Base Amplitude Panning for precise per-speaker gain calculation from 3D object positions.
-- **12-Channel VU Metering:** Real-time high-resolution level metering across the full 7.1.4 speaker array.
+- **Selectable Speaker Layouts:** 5.1, 5.1.2, 5.1.4, 7.1, 7.1.2, 7.1.4, 7.1.6, 9.1.6, plus 5.2/7.2/9.2 dual-subwoofer variants. The 3D room, panning targets, and meters rebuild instantly without interrupting playback.
+- **Advanced Spatial Panning (VBAP):** Vector Base Amplitude Panning with automatic convex-hull triangulation for every layout, plus an angular-blend fallback for sparse layouts such as 5.1.2.
+- **Layout-Aware VU Metering:** Real-time high-resolution level metering for every speaker in the selected layout, including dual subwoofers.
 - **Synthetic Upmix Fallback:** Audio-reactive virtual objects for files where proprietary metadata is inaccessible (optional, can be disabled).
 - **Premium Glassmorphic UI:** Professional dashboard with dark-mode design, real-time object metadata panel, and stream info sidebar.
 

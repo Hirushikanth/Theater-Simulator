@@ -1,27 +1,8 @@
 /**
  * Dolby Atmos Theater Visualizer — Constants
- * Speaker positions, colors, and layout configuration for 7.1.4
+ * Room geometry and shared helpers. Speaker layouts live in layouts.js.
  */
 
-// 7.1.4 Speaker Layout — angles in degrees
-// Azimuth: 0° = front, positive = right, negative = left
-// Elevation: 0° = ear level, positive = above
-export const SPEAKERS = [
-  { id: 'FL',  name: 'Front Left',      azimuth: -30,  elevation: 0,  group: 'front',    color: '#00ffd5' },
-  { id: 'FR',  name: 'Front Right',     azimuth:  30,  elevation: 0,  group: 'front',    color: '#00ffd5' },
-  { id: 'C',   name: 'Center',          azimuth:   0,  elevation: 0,  group: 'center',   color: '#ffffff' },
-  { id: 'LFE', name: 'Subwoofer',       azimuth:   0,  elevation:-30, group: 'lfe',      color: '#ff1744' },
-  { id: 'SL',  name: 'Surround Left',   azimuth: -90,  elevation: 0,  group: 'surround', color: '#4488ff' },
-  { id: 'SR',  name: 'Surround Right',  azimuth:  90,  elevation: 0,  group: 'surround', color: '#4488ff' },
-  { id: 'SBL', name: 'Rear Left',       azimuth:-135,  elevation: 0,  group: 'rear',     color: '#6366f1' },
-  { id: 'SBR', name: 'Rear Right',      azimuth: 135,  elevation: 0,  group: 'rear',     color: '#6366f1' },
-  { id: 'TFL', name: 'Top Front Left',  azimuth: -45,  elevation: 45, group: 'height',   color: '#a855f7' },
-  { id: 'TFR', name: 'Top Front Right', azimuth:  45,  elevation: 45, group: 'height',   color: '#a855f7' },
-  { id: 'TRL', name: 'Top Rear Left',   azimuth:-135,  elevation: 45, group: 'height',   color: '#c084fc' },
-  { id: 'TRR', name: 'Top Rear Right',  azimuth: 135,  elevation: 45, group: 'height',   color: '#c084fc' }
-]
-
-// Convert spherical speaker positions to 3D cartesian
 // Room dimensions (meters): 6m wide, 8m deep, 3.5m tall
 export const ROOM = {
   width: 6,
@@ -33,7 +14,12 @@ export const ROOM = {
 
 // Convert azimuth/elevation string to 3D position intersecting room bounds (AABB RayCast)
 export function speakerToCartesian(speaker) {
-  if (speaker.id === 'LFE') {
+  // Subwoofers (and any speaker with an explicit position) are placed directly.
+  if (speaker.position) {
+    return { ...speaker.position }
+  }
+
+  if (speaker.role === 'LFE' || speaker.group === 'lfe') {
     return { x: 0, y: -1, z: -ROOM.depth / 2 + 0.5 } // Front ground
   }
 

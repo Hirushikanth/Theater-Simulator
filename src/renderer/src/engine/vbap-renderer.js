@@ -1,87 +1,145 @@
 /**
  * VBAP (Vector Base Amplitude Panning) Renderer
  *
- * Calculates speaker gain weights for a given 3D object position
- * across a 7.1.4 speaker array using vector base amplitude panning.
+ * Calculates speaker gain weights for a given 3D object position across the
+ * currently selected speaker layout.
  *
- * For each object position, finds the enclosing speaker triangle
- * and calculates gain weights via matrix inversion.
+ * The panning triangulation is generated automatically from the layout:
+ * virtual nadir/zenith points close the convex hull, then any triangle that
+ * receives gain from a virtual point is renormalised onto the real speakers.
+ * Sparse layouts (notably 5.1.2, which has no rear speakers) fall back to a
+ * two-nearest angular blend when no real triangle encloses the source.
  *
  * Reference: Pulkki, V. (1997). "Virtual sound source positioning
  * using vector base amplitude panning."
  */
 
-import { SPEAKERS, speakerToCartesian, ROOM } from '../utils/constants'
+import { Vector3 } from 'three'
+import { ConvexHull } from 'three/addons/math/ConvexHull.js'
+import { speakerToCartesian } from '../utils/constants'
+import { DEFAULT_LAYOUT, getLayout } from '../utils/layouts'
+
+const VIRTUAL_NADIR = '__NADIR__'
+const VIRTUAL_ZENITH = '__ZENITH__'
+
+function pointKey (point) {
+  return `${point.x.toFixed(6)},${point.y.toFixed(6)},${point.z.toFixed(6)}`
+}
+
+function isSubwoofer (speaker) {
+  return speaker.role === 'LFE' || speaker.group === 'lfe'
+}
 
 export class VBAPRenderer {
-  constructor() {
-    // Pre-compute speaker positions in Cartesian (unit vectors)
-    this.speakerPositions = SPEAKERS.map(s => {
-      const pos = speakerToCartesian(s, 1) // unit sphere
-      return { ...s, pos, vec: [pos.x, pos.y, pos.z] }
+  constructor (layout = DEFAULT_LAYOUT) {
+    this.outputGains = new Map()
+    this.setLayout(layout)
+  }
+
+  /**
+   * Swap the active layout and rebuild its panning geometry.
+   * Safe to call while audio is playing; object gains are recalculated by App.
+   */
+  setLayout (layout) {
+    this.layout = layout || getLayout(DEFAULT_LAYOUT.id)
+
+    this.panningSpeakers = this.layout.speakers.filter(s => !isSubwoofer(s))
+    this.subwoofers = this.layout.speakers.filter(isSubwoofer)
+    this.speakerIds = new Set(this.layout.speakers.map(s => s.id))
+
+    this.speakerPositions = this.panningSpeakers.map(speaker => {
+      const pos = speakerToCartesian(speaker)
+      const len = Math.hypot(pos.x, pos.y, pos.z) || 1
+      return {
+        ...speaker,
+        pos,
+        vec: [pos.x / len, pos.y / len, pos.z / len]
+      }
     })
 
-    // Pre-compute speaker triangulations
     this.triangles = this.computeTriangulation()
-
-    // Pre-invert matrices for each triangle
-    this.invertedMatrices = this.triangles.map(tri => {
-      const [i, j, k] = tri
-      const L1 = this.speakerPositions[i].vec
-      const L2 = this.speakerPositions[j].vec
-      const L3 = this.speakerPositions[k].vec
+    this.invertedMatrices = this.triangles.map(({ ids, vectors }) => {
+      const [L1, L2, L3] = vectors
       return {
-        indices: tri,
+        ids,
         invMatrix: this.invertMatrix3x3([
           [L1[0], L2[0], L3[0]],
           [L1[1], L2[1], L3[1]],
           [L1[2], L2[2], L3[2]]
         ])
       }
-    })
+    }).filter(triangle => triangle.invMatrix)
 
-    // Pre-allocated output map to avoid GC churn at 60fps
     this.outputGains = new Map()
-    SPEAKERS.forEach(s => this.outputGains.set(s.id, 0))
+    this.speakerIds.forEach(id => this.outputGains.set(id, 0))
   }
 
   /**
-   * Compute speaker triangulation for the 7.1.4 layout
-   * Returns arrays of speaker index triplets
+   * Build a closed triangulation from the real speaker directions using the
+   * convex hull plus virtual nadir/zenith points.
    */
-  computeTriangulation() {
-    // Manual triangulation for 7.1.4 based on speaker geometry
-    // Speaker indices: FL=0, FR=1, C=2, LFE=3, SL=4, SR=5, SBL=6, SBR=7,
-    //                  TFL=8, TFR=9, TRL=10, TRR=11
+  computeTriangulation () {
+    if (this.panningSpeakers.length < 3) return []
 
-    return [
-      // Floor layer triangles
-      [0, 2, 1],   // FL-C-FR (front)
-      [0, 4, 2],   // FL-SL-C (front-left)
-      [1, 2, 5],   // FR-C-SR (front-right)
-      [4, 6, 0],   // SL-SBL-FL (left)
-      [5, 1, 7],   // SR-FR-SBR (right)
-      [6, 4, 7],   // SBL-SL-SBR (rear, through sides)
-      [4, 5, 7],   // SL-SR-SBR (mid)
-      [4, 7, 6],   // SL-SBR-SBL (rear)
+    const points = []
+    const idByKey = new Map()
 
-      // Floor-to-ceiling triangles (connecting bed to height)
-      [0, 8, 2],   // FL-TFL-C
-      [1, 2, 9],   // FR-C-TFR
-      [8, 9, 2],   // TFL-TFR-C (top front)
-      [0, 8, 4],   // FL-TFL-SL
-      [1, 9, 5],   // FR-TFR-SR
-      [4, 10, 8],  // SL-TRL-TFL (left wall)
-      [5, 9, 11],  // SR-TFR-TRR (right wall)
-      [6, 10, 4],  // SBL-TRL-SL
-      [7, 5, 11],  // SBR-SR-TRR
-      [6, 7, 10],  // SBL-SBR-TRL
-      [7, 11, 10], // SBR-TRR-TRL
+    const addPoint = (id, x, y, z) => {
+      const len = Math.hypot(x, y, z) || 1
+      const point = new Vector3(x / len, y / len, z / len)
+      points.push(point)
+      idByKey.set(pointKey(point), id)
+    }
 
-      // Ceiling layer
-      [8, 9, 10],  // TFL-TFR-TRL
-      [9, 11, 10], // TFR-TRR-TRL
+    for (const speaker of this.speakerPositions) {
+      addPoint(speaker.id, speaker.vec[0], speaker.vec[1], speaker.vec[2])
+    }
+    addPoint(VIRTUAL_NADIR, 0, -1, 0)
+    addPoint(VIRTUAL_ZENITH, 0, 1, 0)
+
+    const hull = new ConvexHull().setFromPoints(points)
+    const triangles = []
+
+    for (const face of hull.faces) {
+      const edge = face.edge
+      const facePoints = [
+        edge.tail().point,
+        edge.head().point,
+        edge.next.head().point
+      ]
+      const ids = facePoints.map(point => idByKey.get(pointKey(point)))
+
+      if (ids.some(id => id === undefined)) continue
+      if (new Set(ids).size < 3) continue
+
+      const vectors = facePoints.map(point => [point.x, point.y, point.z])
+      triangles.push({ ids, vectors })
+    }
+
+    return triangles
+  }
+
+  /**
+   * Map normalized Atmos coordinates to a unit direction vector.
+   * Azimuth spans the full circle so rear speakers are reachable.
+   */
+  sourceVector (x, y, z) {
+    const azimuth = Math.atan2(x - 0.5, 0.5 - y)
+    const elevation = z * (Math.PI / 2)
+
+    const vec = [
+      Math.cos(elevation) * Math.sin(azimuth),
+      Math.sin(elevation),
+      -Math.cos(elevation) * Math.cos(azimuth)
     ]
+
+    const len = Math.hypot(vec[0], vec[1], vec[2])
+    if (len > 0) {
+      vec[0] /= len
+      vec[1] /= len
+      vec[2] /= len
+    }
+    return vec
   }
 
   /**
@@ -91,40 +149,16 @@ export class VBAPRenderer {
    * @param {number} z - Floor(0) to Ceiling(1)
    * @returns {Map<string, number>} Speaker ID → gain weight
    */
-  calculateGains(x, y, z) {
+  calculateGains (x, y, z) {
     const gains = new Map()
-    SPEAKERS.forEach(s => gains.set(s.id, 0))
+    this.speakerIds.forEach(id => gains.set(id, 0))
 
-    // Convert Atmos coordinates to unit vector.
-    // x/y are the horizontal plane (y: front→back), z is height.
-    // Azimuth must span the full circle so the rear hemisphere is reachable;
-    // the previous x-only mapping locked every source to z ≤ 0, leaving the
-    // rear speakers (SBL/SBR) with zero gain for every object position.
-    const azimuth = Math.atan2(x - 0.5, 0.5 - y)  // 0 = front, + = right, ±π = back
-    const elevation = z * (Math.PI / 2)          // 0 = floor, π/2 = ceiling
+    const srcVec = this.sourceVector(x, y, z)
 
-    // Create source direction vector (matches speakerToCartesian's basis)
-    const srcVec = [
-      Math.cos(elevation) * Math.sin(azimuth),
-      Math.sin(elevation),
-      -Math.cos(elevation) * Math.cos(azimuth)
-    ]
-
-    // Normalize
-    const len = Math.sqrt(srcVec[0] ** 2 + srcVec[1] ** 2 + srcVec[2] ** 2)
-    if (len > 0) {
-      srcVec[0] /= len
-      srcVec[1] /= len
-      srcVec[2] /= len
-    }
-
-    // Find the best triangle
     let bestGains = null
     let bestMinGain = -Infinity
 
-    for (const { indices, invMatrix } of this.invertedMatrices) {
-      if (!invMatrix) continue
-
+    for (const { ids, invMatrix } of this.invertedMatrices) {
       // Calculate gains: g = inv(L) * p
       const g = [
         invMatrix[0][0] * srcVec[0] + invMatrix[0][1] * srcVec[1] + invMatrix[0][2] * srcVec[2],
@@ -132,67 +166,87 @@ export class VBAPRenderer {
         invMatrix[2][0] * srcVec[0] + invMatrix[2][1] * srcVec[1] + invMatrix[2][2] * srcVec[2]
       ]
 
-      // Valid if all gains are non-negative
       const minGain = Math.min(g[0], g[1], g[2])
-      if (minGain >= -0.01) { // small tolerance
-        // Normalize gains (power normalization)
-        const sumSq = Math.sqrt(g[0] ** 2 + g[1] ** 2 + g[2] ** 2)
-        if (sumSq > 0) {
-          const normG = g.map(v => Math.max(0, v) / sumSq)
+      if (minGain < -0.01) continue
 
-          if (minGain > bestMinGain) {
-            bestMinGain = minGain
-            bestGains = { indices, gains: normG }
-          }
-        }
+      let realPower = 0
+      for (let i = 0; i < 3; i++) {
+        if (this.speakerIds.has(ids[i])) realPower += g[i] * g[i]
+      }
+      if (realPower < 1e-10) continue
+
+      if (minGain > bestMinGain) {
+        bestMinGain = minGain
+        bestGains = { ids, gains: g }
       }
     }
 
     if (bestGains) {
-      const { indices: [i, j, k], gains: [g1, g2, g3] } = bestGains
-      gains.set(SPEAKERS[i].id, g1)
-      gains.set(SPEAKERS[j].id, g2)
-      gains.set(SPEAKERS[k].id, g3)
+      const realGains = []
+      let sumSq = 0
+      for (let i = 0; i < 3; i++) {
+        if (!this.speakerIds.has(bestGains.ids[i])) continue
+        const value = Math.max(0, bestGains.gains[i])
+        realGains.push([bestGains.ids[i], value])
+        sumSq += value * value
+      }
+
+      if (sumSq > 1e-12) {
+        const norm = Math.sqrt(sumSq)
+        for (const [id, value] of realGains) {
+          gains.set(id, value / norm)
+        }
+      } else {
+        this.applyFallback(gains, srcVec)
+      }
     } else {
-      // Fallback: nearest speaker gets full weight
-      const nearest = this.findNearestSpeaker(x, y, z)
-      if (nearest) gains.set(nearest, 1.0)
+      this.applyFallback(gains, srcVec)
     }
 
-    // Add LFE based on object position (low-frequency content gets some LFE)
+    // Low-frequency content is sent to the subwoofer(s). Equal-power split
+    // keeps the total sub energy constant across single/dual-sub layouts.
     const lfeGain = z < 0.3 ? 0.3 * (1 - z / 0.3) : 0
-    gains.set('LFE', lfeGain)
+    const subGain = lfeGain / Math.sqrt(Math.max(1, this.subwoofers.length))
+    for (const subwoofer of this.subwoofers) {
+      gains.set(subwoofer.id, subGain)
+    }
 
     return gains
   }
 
   /**
-   * Find the nearest speaker to a position
+   * Blend the two nearest panning speakers. Used when no real triangle
+   * encloses the source (e.g. the rear hemisphere of a 5.1.2 layout).
    */
-  findNearestSpeaker(x, y, z) {
-    let minDist = Infinity
-    let nearest = null
+  applyFallback (gains, srcVec) {
+    if (this.speakerPositions.length === 0) return
 
-    for (const sp of this.speakerPositions) {
-      if (sp.id === 'LFE') continue
-      const dx = sp.pos.x - (x - 0.5) * ROOM.width
-      const dy = sp.pos.y - z * ROOM.height
-      const dz = sp.pos.z - (y - 0.5) * ROOM.depth
-      const dist = dx * dx + dy * dy + dz * dz
+    const ranked = this.speakerPositions
+      .map(speaker => ({
+        id: speaker.id,
+        dot: speaker.vec[0] * srcVec[0] +
+             speaker.vec[1] * srcVec[1] +
+             speaker.vec[2] * srcVec[2]
+      }))
+      .sort((a, b) => b.dot - a.dot)
+      .slice(0, 2)
 
-      if (dist < minDist) {
-        minDist = dist
-        nearest = sp.id
-      }
+    const weights = ranked.map(({ dot }) => 1 / (1.001 - Math.max(-1, Math.min(1, dot))))
+    const norm = Math.sqrt(weights.reduce((sum, weight) => sum + weight * weight, 0))
+
+    if (norm > 0) {
+      ranked.forEach((speaker, index) => {
+        gains.set(speaker.id, weights[index] / norm)
+      })
+    } else {
+      gains.set(ranked[0].id, 1)
     }
-
-    return nearest
   }
 
   /**
    * Invert a 3×3 matrix
    */
-  invertMatrix3x3(m) {
+  invertMatrix3x3 (m) {
     const det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
                 - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
                 + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
@@ -223,9 +277,8 @@ export class VBAPRenderer {
    * Calculate speaker contributions for multiple objects
    * Returns aggregated gains per speaker
    */
-  calculateSceneGains(objects) {
-    // Zero out the existing map instead of making a new one
-    SPEAKERS.forEach(s => this.outputGains.set(s.id, 0))
+  calculateSceneGains (objects) {
+    this.speakerIds.forEach(id => this.outputGains.set(id, 0))
 
     for (const obj of objects) {
       const objGains = this.calculateGains(obj.x, obj.y, obj.z)

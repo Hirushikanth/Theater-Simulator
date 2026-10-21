@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "validate:layouts": "esbuild scripts/validate-layouts.js --bundle --format=esm --platform=node --outfile=node_modules/.cache/validate-layouts.mjs && node node_modules/.cache/validate-layouts.mjs",
     "dist": "electron-vite build && electron-builder",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps && node scripts/fix-electron-install.js",
@@ -83,6 +84,7 @@
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "esbuild": "^0.25.12",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^7.3.6"

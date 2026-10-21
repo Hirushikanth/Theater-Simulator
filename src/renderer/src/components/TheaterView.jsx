@@ -12,7 +12,7 @@ import { TheaterScene } from '../three/TheaterScene'
  * eliminating the ~16 ms scheduling latency that caused visual stutter.
  */
 const TheaterView = forwardRef(function TheaterView (
-  { objects, speakerGains, vuMeterEngine, metadataSource, isPlaying, hasFile, onOpenFile },
+  { objects, speakerGains, vuMeterEngine, metadataSource, isPlaying, hasFile, onOpenFile, layout },
   ref
 ) {
   const containerRef = useRef(null)
@@ -35,7 +35,7 @@ const TheaterView = forwardRef(function TheaterView (
   // ── Initialize Three.js scene ─────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return
-    sceneRef.current = new TheaterScene(containerRef.current)
+    sceneRef.current = new TheaterScene(containerRef.current, layout)
     return () => {
       if (sceneRef.current) {
         sceneRef.current.destroy()
@@ -43,6 +43,12 @@ const TheaterView = forwardRef(function TheaterView (
       }
     }
   }, [])
+
+  // Rebuild the speaker array without recreating the scene or audio graph.
+  useEffect(() => {
+    if (!sceneRef.current) return
+    sceneRef.current.setLayout(layout)
+  }, [layout])
 
   // ── Audio-level speaker glow (only when no VBAP spatial data is active) ──
   // When metadata IS active, App.jsx drives speaker glow via the ref above.
@@ -84,7 +90,7 @@ const TheaterView = forwardRef(function TheaterView (
       {/* HUD Overlay */}
       <div className="theater-overlay">
         <div className={`theater-hud ${isPlaying ? 'theater-hud-active' : ''}`}>
-          {isPlaying ? '● LIVE' : '○ IDLE'} &nbsp;|&nbsp; 7.1.4 Layout
+          {isPlaying ? '● LIVE' : '○ IDLE'} &nbsp;|&nbsp; {layout.label} Layout
         </div>
         {metadataSource && metadataSource !== 'synthetic' && (
           <div className="theater-hud theater-hud-active">

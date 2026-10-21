@@ -9,14 +9,17 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { ROOM, atmosToRoom, objectColor, hexToRgb } from '../utils/constants'
+import { DEFAULT_LAYOUT } from '../utils/layouts'
 import { RoomEnvironment } from './RoomEnvironment'
 import { SpeakerSystem } from './SpeakerSystem'
 
 const MAX_ATMOS_OBJECTS = 128
 
 export class TheaterScene {
-  constructor(container) {
+  constructor(container, layout = DEFAULT_LAYOUT) {
     this.container = container
+    this.layout = layout
+    this.layoutId = layout.id
     this.width = container.clientWidth
     this.height = container.clientHeight
 
@@ -84,7 +87,7 @@ export class TheaterScene {
     this.room = new RoomEnvironment()
     this.scene.add(this.room.group)
 
-    this.speakers = new SpeakerSystem()
+    this.speakers = new SpeakerSystem(this.layout.speakers)
     this.scene.add(this.speakers.group)
 
     // Pre-allocate the dynamic object pool
@@ -178,6 +181,25 @@ export class TheaterScene {
         this.objectPool.push(mesh)
       }
     }
+  }
+
+  setLayout(layout) {
+    if (!layout || layout.id === this.layoutId) return
+
+    this.layout = layout
+    this.layoutId = layout.id
+
+    if (this.speakers) {
+      this.scene.remove(this.speakers.group)
+      this.speakers.dispose()
+    }
+
+    this.speakers = new SpeakerSystem(layout.speakers)
+    this.scene.add(this.speakers.group)
+
+    // App recalculates gains for the new layout immediately after this call.
+    this.speakerGains = new Map()
+    this.speakerLevels = new Map()
   }
 
   updateSpeakerGains(gains) {

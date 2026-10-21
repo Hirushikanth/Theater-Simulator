@@ -8,7 +8,7 @@
  * - Playback synchronization for visualization
  */
 
-import { SPEAKERS, CHANNEL_LAYOUTS } from '../utils/constants'
+import { CHANNEL_LAYOUTS } from '../utils/constants'
 
 export class AudioEngine {
   constructor() {
@@ -64,6 +64,7 @@ export class AudioEngine {
     return new Promise((resolve, reject) => {
       // Create hidden audio element for streaming from disk
       this.audioEl = new Audio()
+      this.audioEl.crossOrigin = 'anonymous'
       
       this.audioEl.preload = "auto"
       
@@ -250,8 +251,8 @@ export class AudioEngine {
     }
     if (layouts[this.channelCount]) return layouts[this.channelCount]
     // Unknown count (e.g. 7ch 6.1/7.0 variants, 10ch, 16ch): generic per-index
-    // keys so no phantom SBL/SBR-style meters appear. Standard VU meters will
-    // read silent for these; dynamic meter rendering is future work.
+    // keys so no phantom SBL/SBR-style meters appear. The selected output
+    // layout still renders, and object-driven VBAP remains unaffected.
     return Array.from({ length: this.channelCount }, (_, ch) => `CH${ch}`)
   }
 

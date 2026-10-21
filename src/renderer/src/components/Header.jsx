@@ -1,9 +1,11 @@
 import React from 'react'
+import { LAYOUTS, LAYOUT_GROUPS } from '../utils/layouts'
 
 export default function Header({ 
   onOpenFile, fileName, isLoading, 
   enableSyntheticUpmix, onToggleSynthetic,
-  useProfessionalDecoder, onToggleProfessional
+  useProfessionalDecoder, onToggleProfessional,
+  layoutId, onLayoutChange
 }) {
   return (
     <div className="titlebar">
@@ -16,6 +18,23 @@ export default function Header({
       </div>
 
       <div className="titlebar-actions">
+        <label className="layout-picker">
+          <span>Speaker Layout</span>
+          <select
+            className="layout-select"
+            value={layoutId}
+            onChange={onLayoutChange}
+            aria-label="Speaker layout"
+          >
+            {LAYOUT_GROUPS.map(group => (
+              <optgroup key={group.label} label={group.label}>
+                {group.ids.map(id => (
+                  <option key={id} value={id}>{LAYOUTS[id].label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '16px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
           <input 
             type="checkbox" 

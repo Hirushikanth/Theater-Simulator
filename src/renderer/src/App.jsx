@@ -13,7 +13,7 @@ import { ADMParser } from './parsers/adm-parser'
 import { DAMFParser } from './parsers/damf-parser'
 import { SpatialSimulator } from './engine/spatial-simulator'
 import { VUMeterEngine } from './engine/vu-meter-engine'
-import { SPEAKERS } from './utils/constants'
+import { DEFAULT_LAYOUT_ID, getLayout, isLayoutId } from './utils/layouts'
 import { getFileExtension, getFileName } from './utils/helpers'
 
 const audioEngine = new AudioEngine()
@@ -21,6 +21,15 @@ const vbapRenderer = new VBAPRenderer()
 const vuMeterEngine = new VUMeterEngine(audioEngine, vbapRenderer)
 
 const STREAM_SELECTION_CANCELLED = 'STREAM_SELECTION_CANCELLED'
+const LAYOUT_STORAGE_KEY = 'atmos.theaterLayout'
+
+function readStoredLayoutId () {
+  try {
+    const stored = window.localStorage.getItem(LAYOUT_STORAGE_KEY)
+    if (isLayoutId(stored)) return stored
+  } catch {}
+  return DEFAULT_LAYOUT_ID
+}
 
 export default function App() {
   const [fileInfo, setFileInfo] = useState(null)
@@ -38,6 +47,9 @@ export default function App() {
 
   const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
   const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
+  const [layoutId, setLayoutId] = useState(readStoredLayoutId)
+
+  const layout = getLayout(layoutId)
 
   const metadataParserRef = useRef(null)
   const rafRef            = useRef(null)
@@ -106,6 +118,30 @@ export default function App() {
 
     rafRef.current = requestAnimationFrame(updateLoop)
   }, [])
+
+  // Apply the selected layout to the panning engine, meters, and (via
+  // TheaterView) the 3D speaker array without interrupting playback.
+  useEffect(() => {
+    const selectedLayout = getLayout(layoutId)
+
+    vbapRenderer.setLayout(selectedLayout)
+    vuMeterEngine.setLayout(selectedLayout)
+
+    if (lastObjectsRef.current.length > 0) {
+      const gains = vbapRenderer.calculateSceneGains(lastObjectsRef.current)
+      setSpeakerGains(gains)
+      if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(gains)
+      vuMeterEngine.setSpeakerGains(gains)
+    } else {
+      const emptyGains = new Map()
+      setSpeakerGains(emptyGains)
+      vuMeterEngine.setSpeakerGains(emptyGains)
+    }
+
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, layoutId)
+    } catch {}
+  }, [layoutId])
 
   useEffect(() => {
     audioEngine.onEnded = () => {
@@ -599,6 +635,13 @@ export default function App() {
     audioEngine.setVolume(val)
   }, [])
 
+  const handleLayoutChange = useCallback((event) => {
+    const nextLayoutId = event.target.value
+    if (isLayoutId(nextLayoutId)) {
+      setLayoutId(nextLayoutId)
+    }
+  }, [])
+
   const handleDragOver = useCallback((e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -635,6 +678,7 @@ export default function App() {
         setMetadataSource('synthetic')
       } else {
         metadataParserRef.current = null
+        lastObjectsRef.current = []
         setObjects([])
         setSpeakerGains(new Map())
 
@@ -678,6 +722,8 @@ export default function App() {
         onToggleSynthetic={handleToggleSynthetic}
         useProfessionalDecoder={useProfessionalDecoder}
         onToggleProfessional={handleToggleProfessional}
+        layoutId={layoutId}
+        onLayoutChange={handleLayoutChange}
       />
 
       <div className="main-content">
@@ -690,12 +736,13 @@ export default function App() {
           isPlaying={isPlaying}
           hasFile={hasFile}
           onOpenFile={handleFileOpen}
+          layout={layout}
         />
       </div>
 
       <div className="side-panel">
-        <FileInfo fileInfo={fileInfo} metadataSource={metadataSource} error={error} />
-        <ChannelMeters vuMeterEngine={vuMeterEngine} isPlaying={isPlaying} />
+        <FileInfo fileInfo={fileInfo} metadataSource={metadataSource} error={error} layout={layout} />
+        <ChannelMeters vuMeterEngine={vuMeterEngine} isPlaying={isPlaying} layout={layout} />
         <MetadataPanel objects={objects} metadataSource={metadataSource} />
       </div>
 

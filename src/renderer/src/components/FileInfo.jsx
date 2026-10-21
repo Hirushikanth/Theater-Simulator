@@ -1,7 +1,7 @@
 import React from 'react'
 import { formatCodecName, formatBitrate } from '../utils/helpers'
 
-export default function FileInfo({ fileInfo, metadataSource, error }) {
+export default function FileInfo({ fileInfo, metadataSource, error, layout }) {
   if (error) {
     return (
       <div className="panel">
@@ -50,6 +50,13 @@ export default function FileInfo({ fileInfo, metadataSource, error }) {
           <span className="file-info-value">
             {fileInfo.channels}ch {fileInfo.channelLayout ? `(${fileInfo.channelLayout})` : ''}
           </span>
+
+          {layout && (
+            <>
+              <span className="file-info-label">Output</span>
+              <span className="file-info-value">{layout.label} Layout</span>
+            </>
+          )}
 
           <span className="file-info-label">Sample Rate</span>
           <span className="file-info-value">{(fileInfo.sampleRate / 1000).toFixed(1)} kHz</span>
