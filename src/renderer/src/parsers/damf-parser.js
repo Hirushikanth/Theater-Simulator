@@ -196,11 +196,11 @@ export class DAMFParser {
         currentEvent = {
           id: -1,
           samplePos: 0,
-          active: true,
+          active: undefined,
           pos: null,
-          gain: 0,
-          size: 0,
-          rampLength: 0
+          gain: undefined,
+          size: undefined,
+          rampLength: undefined
         }
         // Parse inline key-value on the same line as "- "
         const inlineContent = trimmed.substring(2).trim()
@@ -244,20 +244,9 @@ export class DAMFParser {
     for (const [id, events] of this._objectEvents) {
       if (events.length === 0) continue
 
-      const positions = events
-        .filter(e => e.pos !== null && e.active)
-        .map(e => ({
-          time: e.samplePos / this.sampleRate,
-          x: this._normalizeX(e.pos[0]),
-          y: this._normalizeY(e.pos[1]),
-          z: this._normalizeZ(e.pos[2]),
-          gain: this._parseGainValue(e.gain),
-          size: Math.max(0.03, (e.size || 0) * 0.1 + 0.05),
-          rampLength: e.rampLength,
-          confidence: 'damf'
-        }))
+      const positions = this._buildObjectTimeline(events)
 
-      if (positions.length > 0) {
+      if (positions.some(p => p.active !== false)) {
         const lastTime = positions[positions.length - 1].time
         if (lastTime > this.duration) this.duration = lastTime
 
@@ -272,6 +261,148 @@ export class DAMFParser {
     }
 
     console.log(`[DAMF] Built ${this.objects.length} tracked objects, duration=${this.duration.toFixed(2)}s`)
+  }
+
+  /**
+   * Convert raw DAMF events into a state timeline.
+   *
+   * DAMF only writes properties that changed. `active`, `gain`, and `size`
+   * are usually present on the first event and then omitted, so they must be
+   * carried forward. An explicit `active: false` has to stay in the timeline
+   * as a visibility boundary; otherwise the object remains visible until its
+   * next active event and smooth mode interpolates straight through the gap.
+   * Implicit terminal parks (a final jump onto the floor plane) are converted
+   * to deactivations at the previous position.
+   *
+   * @param {Array} events  sorted events for one object
+   * @returns {Array<{ time, x, y, z, gain, size, active, rampLength, confidence }>}
+   */
+  _buildObjectTimeline(events) {
+    const positions = []
+    let state = null
+
+    for (const e of events) {
+      if (!state) {
+        state = {
+          active: true,
+          hasPosition: false,
+          x: 0,
+          y: 0,
+          z: 0,
+          gain: 1,
+          size: 0.05,
+          rampLength: 0
+        }
+      }
+
+      let changed = false
+
+      if (e.active !== undefined && e.active !== state.active) {
+        state.active = e.active
+        changed = true
+      }
+
+      // Ignore positions that arrive while the object is inactive. Encoders
+      // park deactivated objects at the room origin or a screen corner, and
+      // carrying that position forward would make the object reappear there.
+      if (state.active && e.pos !== null) {
+        const x = this._normalizeX(e.pos[0])
+        const y = this._normalizeY(e.pos[1])
+        const z = this._normalizeZ(e.pos[2])
+        if (!state.hasPosition || x !== state.x || y !== state.y || z !== state.z) {
+          state.x = x
+          state.y = y
+          state.z = z
+          state.hasPosition = true
+          changed = true
+        }
+      }
+
+      if (e.gain !== undefined) {
+        const gain = this._parseGainValue(e.gain)
+        if (gain !== state.gain) {
+          state.gain = gain
+          changed = true
+        }
+      }
+
+      if (e.size !== undefined) {
+        const size = Math.max(0.03, e.size * 0.1 + 0.05)
+        if (size !== state.size) {
+          state.size = size
+          changed = true
+        }
+      }
+
+      if (e.rampLength !== undefined) {
+        state.rampLength = e.rampLength
+      }
+
+      if (!state.hasPosition) continue
+
+      // The first positioned event establishes the object's initial state.
+      // Later events only need a keyframe when something visual changed.
+      if (changed || positions.length === 0) {
+        positions.push({
+          time: e.samplePos / this.sampleRate,
+          x: state.x,
+          y: state.y,
+          z: state.z,
+          gain: state.gain,
+          size: state.size,
+          active: state.active,
+          rampLength: state.rampLength,
+          confidence: 'damf'
+        })
+      }
+    }
+
+    this._hideImplicitTerminalPark(positions)
+
+    return positions
+  }
+
+  /**
+   * Hide an object whose final metadata event is an implicit park.
+   *
+   * TrueHD encoders do not always emit `active: false` when an object goes
+   * offline. Instead the last event often teleports the object to a floor
+   * position (the Dolby renderer's park spot), after which no more events
+   * arrive. Interpolating to that park makes the object glide into the
+   * front-left corner before vanishing. Replace the park keyframe with a
+   * deactivation at the previous position so the object disappears where it
+   * was last visible.
+   *
+   * Large final moves that stay above the floor are real object motion (e.g.
+   * a fly to the ceiling) and are left untouched.
+   *
+   * @param {Array} positions  timeline for one object, modified in place
+   */
+  _hideImplicitTerminalPark(positions) {
+    if (positions.length < 2) return
+
+    const last = positions[positions.length - 1]
+    const previous = positions[positions.length - 2]
+
+    if (last.active === false || previous.active === false) return
+    if (previous.gain <= 0.001 || last.time <= previous.time) return
+
+    const jump = Math.hypot(
+      last.x - previous.x,
+      last.y - previous.y,
+      last.z - previous.z
+    )
+
+    // Parks are large horizontal jumps onto the floor plane. Use a
+    // conservative threshold so ordinary end-of-scene motion is preserved.
+    if (jump < 0.3 || last.z > 0.05) return
+
+    positions[positions.length - 1] = {
+      ...previous,
+      time: last.time,
+      active: false,
+      confidence: 'damf'
+    }
   }
 
   /**
@@ -348,14 +479,14 @@ export class DAMFParser {
   }
 
   /**
-   * Get interpolated object positions at a given playback time.
-   * For each object, binary-searches the event timeline and interpolates.
-   * Objects are only shown AFTER their first active event.
+   * Get object positions at a given playback time.
    *
    * @param {number} time - Playback time in seconds
+   * @param {boolean} smooth - true = interpolate between events;
+   *                           false = hold the exact latest event
    * @returns {Array<{ id, name, x, y, z, gain, size, confidence }>}
    */
-  getObjectsAtTime(time) {
+  getObjectsAtTime(time, smooth = true) {
     const result = []
 
     for (const obj of this.objects) {
@@ -365,35 +496,51 @@ export class DAMFParser {
       const firstTime = positions[0].time
       const lastTime = positions[positions.length - 1].time
 
-      // Don't show object before its first active event
+      // Don't show object before its first event
       if (time < firstTime) continue
 
-      // After last keyframe: show at last known position
-      if (time >= lastTime) {
-        const p = positions[positions.length - 1]
+      // Last event at or before `time`
+      let lo = 0, hi = positions.length - 1
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (positions[mid].time <= time) lo = mid
+        else hi = mid - 1
+      }
+
+      const before = positions[lo]
+
+      // Inactive/silent objects disappear until an explicit active event.
+      if (before.active === false || before.gain <= 0.001) continue
+
+      if (!smooth || time >= lastTime) {
         result.push({
           id: obj.id,
           name: obj.name,
-          x: p.x, y: p.y, z: p.z,
-          gain: p.gain,
-          size: p.size,
+          x: before.x, y: before.y, z: before.z,
+          gain: before.gain,
+          size: before.size,
           confidence: 'damf'
         })
         continue
       }
 
-      // Binary search for bracket
-      let lo = 0, hi = positions.length - 1
-      while (lo < hi - 1) {
-        const mid = (lo + hi) >> 1
-        if (positions[mid].time <= time) lo = mid
-        else hi = mid
+      const after = positions[lo + 1]
+
+      // Never interpolate across an inactive/silent gap. Hold the last
+      // visible state until the deactivation event, then vanish.
+      if (!after || after.active === false || after.gain <= 0.001) {
+        result.push({
+          id: obj.id,
+          name: obj.name,
+          x: before.x, y: before.y, z: before.z,
+          gain: before.gain,
+          size: before.size,
+          confidence: 'damf'
+        })
+        continue
       }
 
-      const before = positions[lo]
-      const after = positions[hi]
-
-      // Interpolate
+      // Interpolate within a continuous active span
       const dt = after.time - before.time
       const t = dt > 0 ? (time - before.time) / dt : 0
 

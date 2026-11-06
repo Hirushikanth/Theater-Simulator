@@ -5,6 +5,7 @@ export default function Header({
   onOpenFile, fileName, isLoading, 
   enableSyntheticUpmix, onToggleSynthetic,
   useProfessionalDecoder, onToggleProfessional,
+  smoothObjectMotion, onToggleSmoothMotion,
   layoutId, onLayoutChange
 }) {
   return (
@@ -36,6 +37,8 @@ export default function Header({
           onToggleSynthetic={onToggleSynthetic}
           useProfessionalDecoder={useProfessionalDecoder}
           onToggleProfessional={onToggleProfessional}
+          smoothObjectMotion={smoothObjectMotion}
+          onToggleSmoothMotion={onToggleSmoothMotion}
         />
         <button className="btn btn-primary" onClick={onOpenFile}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

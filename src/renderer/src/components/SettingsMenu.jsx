@@ -66,7 +66,9 @@ export default function SettingsMenu ({
   enableSyntheticUpmix,
   onToggleSynthetic,
   useProfessionalDecoder,
-  onToggleProfessional
+  onToggleProfessional,
+  smoothObjectMotion,
+  onToggleSmoothMotion
 }) {
   const [isOpen, setIsOpen] = useState(false)
   const wrapperRef = useRef(null)
@@ -172,6 +174,17 @@ export default function SettingsMenu ({
             <p className="settings-hint">
               Room, panning, and meters update instantly.
             </p>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section-label">Rendering</div>
+
+            <ToggleRow
+              title="Smooth Object Motion"
+              description="Interpolate between object metadata updates"
+              checked={smoothObjectMotion}
+              onChange={onToggleSmoothMotion}
+            />
           </section>
 
           <section className="settings-section">

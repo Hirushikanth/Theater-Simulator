@@ -161,10 +161,10 @@ export class TheaterScene {
       mesh.material.emissive.setRGB(rgb.r * 0.5, rgb.g * 0.5, rgb.b * 0.5)
 
       // Snap opacity directly to the metadata-driven value — no lerp,
-      // no artificial smoothing. The visualiser shows exactly what the
-      // encoder wrote, frame by frame.
-      const targetOpacity = 0.4 + (obj.gain || 0.8) * 0.6
-      mesh.material.opacity = targetOpacity
+      // no artificial smoothing. A zero gain means the object is silent
+      // (offline), not that the gain field is missing.
+      const gain = Number.isFinite(obj.gain) ? Math.max(0, obj.gain) : 0.8
+      mesh.material.opacity = gain > 0.001 ? Math.min(1, 0.4 + gain * 0.6) : 0
 
       // Size scaling
       const scale = 0.08 + (obj.size || 0.05) * 0.3

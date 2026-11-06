@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "validate:layouts": "esbuild scripts/validate-layouts.js --bundle --format=esm --platform=node --outfile=node_modules/.cache/validate-layouts.mjs && node node_modules/.cache/validate-layouts.mjs",
+    "test:parsers": "esbuild scripts/test-parsers.mjs --bundle --format=esm --platform=node --packages=external --outfile=node_modules/.cache/test-parsers.mjs && node node_modules/.cache/test-parsers.mjs",
     "dist": "electron-vite build && electron-builder",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps && node scripts/fix-electron-install.js",
