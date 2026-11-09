@@ -13,7 +13,7 @@ import { ADMParser } from './parsers/adm-parser'
 import { DAMFParser } from './parsers/damf-parser'
 import { SpatialSimulator } from './engine/spatial-simulator'
 import { VUMeterEngine } from './engine/vu-meter-engine'
-import { SPEAKERS } from './utils/constants'
+import { DEFAULT_LAYOUT_ID, getLayout, isLayoutId } from './utils/layouts'
 import { getFileExtension, getFileName } from './utils/helpers'
 
 const audioEngine = new AudioEngine()
@@ -21,6 +21,25 @@ const vbapRenderer = new VBAPRenderer()
 const vuMeterEngine = new VUMeterEngine(audioEngine, vbapRenderer)
 
 const STREAM_SELECTION_CANCELLED = 'STREAM_SELECTION_CANCELLED'
+const LAYOUT_STORAGE_KEY = 'atmos.theaterLayout'
+const SMOOTH_MOTION_STORAGE_KEY = 'atmos.smoothObjectMotion'
+
+function readStoredLayoutId () {
+  try {
+    const stored = window.localStorage.getItem(LAYOUT_STORAGE_KEY)
+    if (isLayoutId(stored)) return stored
+  } catch {}
+  return DEFAULT_LAYOUT_ID
+}
+
+function readStoredSmoothMotion () {
+  try {
+    const stored = window.localStorage.getItem(SMOOTH_MOTION_STORAGE_KEY)
+    if (stored === 'true') return true
+    if (stored === 'false') return false
+  } catch {}
+  return true
+}
 
 export default function App() {
   const [fileInfo, setFileInfo] = useState(null)
@@ -38,6 +57,10 @@ export default function App() {
 
   const [enableSyntheticUpmix, setEnableSyntheticUpmix] = useState(false)
   const [useProfessionalDecoder, setUseProfessionalDecoder] = useState(true)
+  const [smoothObjectMotion, setSmoothObjectMotion] = useState(readStoredSmoothMotion)
+  const [layoutId, setLayoutId] = useState(readStoredLayoutId)
+
+  const layout = getLayout(layoutId)
 
   const metadataParserRef = useRef(null)
   const rafRef            = useRef(null)
@@ -45,6 +68,7 @@ export default function App() {
   const theaterViewRef    = useRef(null)  // imperative handle to TheaterScene — bypasses React
   const lastRawTimeRef    = useRef(0)     // smooth playhead sync baseline
   const lastSyncTimeRef   = useRef(0)     // high-res timestamp of the sync baseline
+  const smoothMotionRef   = useRef(smoothObjectMotion)
 
   // Track the active temp dirs so we don't delete them while playing!
   const activeTempDirsRef  = useRef([])
@@ -70,7 +94,7 @@ export default function App() {
     const time = Math.min(rawTime + Math.min(elapsed, 0.1), audioEngine.duration || 99999)
 
     if (metadataParserRef.current) {
-      const objs = metadataParserRef.current.getObjectsAtTime(time)
+      const objs = metadataParserRef.current.getObjectsAtTime(time, smoothMotionRef.current)
 
       // ── FAST PATH (60 fps) ─────────────────────────────────────────────────
       // Drive the Three.js scene directly — no React state, no re-render, no
@@ -106,6 +130,37 @@ export default function App() {
 
     rafRef.current = requestAnimationFrame(updateLoop)
   }, [])
+
+  // Apply the selected layout to the panning engine, meters, and (via
+  // TheaterView) the 3D speaker array without interrupting playback.
+  useEffect(() => {
+    const selectedLayout = getLayout(layoutId)
+
+    vbapRenderer.setLayout(selectedLayout)
+    vuMeterEngine.setLayout(selectedLayout)
+
+    if (lastObjectsRef.current.length > 0) {
+      const gains = vbapRenderer.calculateSceneGains(lastObjectsRef.current)
+      setSpeakerGains(gains)
+      if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(gains)
+      vuMeterEngine.setSpeakerGains(gains)
+    } else {
+      const emptyGains = new Map()
+      setSpeakerGains(emptyGains)
+      vuMeterEngine.setSpeakerGains(emptyGains)
+    }
+
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, layoutId)
+    } catch {}
+  }, [layoutId])
+
+  useEffect(() => {
+    smoothMotionRef.current = smoothObjectMotion
+    try {
+      window.localStorage.setItem(SMOOTH_MOTION_STORAGE_KEY, String(smoothObjectMotion))
+    } catch {}
+  }, [smoothObjectMotion])
 
   useEffect(() => {
     audioEngine.onEnded = () => {
@@ -566,37 +621,56 @@ export default function App() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
   }, [])
 
+  const syncObjectsAt = useCallback((time, smooth) => {
+    const parser = metadataParserRef.current
+    if (!parser) return
+
+    const objs = parser.getObjectsAtTime(time, smooth)
+    lastObjectsRef.current = objs
+    setObjects(objs)
+
+    // Always update the 3D scene directly — works during pause too
+    if (theaterViewRef.current) theaterViewRef.current.updateObjects(objs)
+
+    if (objs.length > 0) {
+      const gains = vbapRenderer.calculateSceneGains(objs)
+      setSpeakerGains(gains)
+      if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(gains)
+      vuMeterEngine.setSpeakerGains(gains)
+    } else {
+      // Clear ghost glows if scrubbing to an empty section
+      const emptyGains = new Map()
+      setSpeakerGains(emptyGains)
+      if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(emptyGains)
+      vuMeterEngine.setSpeakerGains(emptyGains)
+    }
+  }, [])
+
   const handleSeek = useCallback((time) => {
     audioEngine.seek(time)
     setCurrentTime(time)
     lastRawTimeRef.current = time
     lastSyncTimeRef.current = performance.now()
+    syncObjectsAt(time, smoothMotionRef.current)
+  }, [syncObjectsAt])
 
-    if (metadataParserRef.current) {
-      const objs = metadataParserRef.current.getObjectsAtTime(time)
-      lastObjectsRef.current = objs
-      setObjects(objs)
-
-      // Always update the 3D scene directly — works during pause too
-      if (theaterViewRef.current) theaterViewRef.current.updateObjects(objs)
-
-      if (objs.length > 0) {
-        const gains = vbapRenderer.calculateSceneGains(objs)
-        setSpeakerGains(gains)
-        if (theaterViewRef.current) theaterViewRef.current.updateSpeakerGains(gains)
-        vuMeterEngine.setSpeakerGains(gains)
-      } else {
-        // Clear ghost glows if scrubbing to an empty section
-        const emptyGains = new Map()
-        setSpeakerGains(emptyGains)
-        vuMeterEngine.setSpeakerGains(emptyGains)
-      }
-    }
-  }, [])
+  const handleToggleSmoothMotion = useCallback((e) => {
+    const next = e.target.checked
+    smoothMotionRef.current = next
+    setSmoothObjectMotion(next)
+    if (!isPlaying) syncObjectsAt(audioEngine.getCurrentTime(), next)
+  }, [isPlaying, syncObjectsAt])
 
   const handleVolumeChange = useCallback((val) => {
     setVolume(val)
     audioEngine.setVolume(val)
+  }, [])
+
+  const handleLayoutChange = useCallback((event) => {
+    const nextLayoutId = event.target.value
+    if (isLayoutId(nextLayoutId)) {
+      setLayoutId(nextLayoutId)
+    }
   }, [])
 
   const handleDragOver = useCallback((e) => {
@@ -635,6 +709,7 @@ export default function App() {
         setMetadataSource('synthetic')
       } else {
         metadataParserRef.current = null
+        lastObjectsRef.current = []
         setObjects([])
         setSpeakerGains(new Map())
 
@@ -678,6 +753,10 @@ export default function App() {
         onToggleSynthetic={handleToggleSynthetic}
         useProfessionalDecoder={useProfessionalDecoder}
         onToggleProfessional={handleToggleProfessional}
+        smoothObjectMotion={smoothObjectMotion}
+        onToggleSmoothMotion={handleToggleSmoothMotion}
+        layoutId={layoutId}
+        onLayoutChange={handleLayoutChange}
       />
 
       <div className="main-content">
@@ -690,12 +769,13 @@ export default function App() {
           isPlaying={isPlaying}
           hasFile={hasFile}
           onOpenFile={handleFileOpen}
+          layout={layout}
         />
       </div>
 
       <div className="side-panel">
-        <FileInfo fileInfo={fileInfo} metadataSource={metadataSource} error={error} />
-        <ChannelMeters vuMeterEngine={vuMeterEngine} isPlaying={isPlaying} />
+        <FileInfo fileInfo={fileInfo} metadataSource={metadataSource} error={error} layout={layout} />
+        <ChannelMeters vuMeterEngine={vuMeterEngine} isPlaying={isPlaying} layout={layout} />
         <MetadataPanel objects={objects} metadataSource={metadataSource} />
       </div>
 

@@ -173,6 +173,7 @@ class BitReader {
 
 class ObjectInfoBlock {
   constructor () {
+    this.inactive           = false
     this.validPosition      = false
     this.differentialPos    = false
     this.gain               = -1    // -1 = reuse last
@@ -203,6 +204,7 @@ class ObjectInfoBlock {
    */
   update (reader, blk, bedOrISFObject) {
     const inactive        = reader.readBit()
+    this.inactive         = inactive
     // basicInfoStatus: blk==0 always 1; otherwise read 2 bits
     const basicInfoStatus = inactive ? 0 : (blk === 0 ? 1 : reader.read(2))
 
@@ -391,8 +393,8 @@ class OAElementMD {
     this._valid            = false
     this.minOffset         = -1   // -1 = not an object element
     this._sampleOffset     = 0
-    this._blockOffsets     = []   // blockOffsetFactor[]
-    this._rampDurations    = []   // rampDuration[]
+    this._blockStartSamples = []  // sample_offset + block_offset_factor * 32
+    this._rampDurations    = []   // rampDuration[] in samples
     this._infoBlocks       = []   // [objectIndex][blockIndex] = ObjectInfoBlock
   }
 
@@ -421,50 +423,6 @@ class OAElementMD {
     reader.position = endPos   // padding / skip remainder
   }
 
-  /**
-   * Get per-object positions from this element at the given timecode.
-   * Returns an array of { id, x, y, z, gain, size, valid } per object.
-   *
-   * @param {number} timecode  samples since start of audio frame
-   * @returns {{ id: number, x: number, y: number, z: number,
-   *             gain: number, size: number, valid: boolean }[]}
-   */
-  getPositions (timecode) {
-    if (!this._valid || this._infoBlocks.length === 0) return []
-
-    // Find which block applies at this timecode
-    let blkIdx = 0
-    for (let b = 0; b < this._blockOffsets.length; b++) {
-      if (this._blockOffsets[b] <= timecode) blkIdx = b
-    }
-
-    const results = []
-    for (let obj = 0; obj < this._infoBlocks.length; obj++) {
-      const blocks = this._infoBlocks[obj]
-      if (!blocks || !blocks[blkIdx]) continue
-
-      const block = blocks[blkIdx]
-      // accumulate differential positions starting from block 0
-      let lx = 0.5, ly = 0.5, lz = 0
-      for (let b = 0; b <= blkIdx; b++) {
-        const pos = this._infoBlocks[obj][b].resolvePosition(lx, ly, lz)
-        if (pos.valid) { lx = pos.x; ly = pos.y; lz = pos.z }
-      }
-
-      results.push({
-        id:   obj,
-        x:    lx,
-        y:    ly,
-        z:    lz,
-        gain: block.gain >= 0 ? block.gain : 1.0,
-        size: block.size >= 0 ? Math.max(0.05, block.size) : 0.1,
-        valid: block.validPosition,
-        isBed: block.anchor === OBJ_ANCHOR_SPEAKER
-      })
-    }
-    return results
-  }
-
   // ── private ─────────────────────────────────────────────────────────────────
 
   _readObjectElement (reader, objectCount, bedOrISFObjects) {
@@ -475,7 +433,7 @@ class OAElementMD {
     }
 
     // Allocate info block matrix [objectCount][blockCount]
-    const blockCount = this._blockOffsets.length
+    const blockCount = this._blockStartSamples.length
     this._infoBlocks = []
     for (let obj = 0; obj < objectCount; obj++) {
       this._infoBlocks[obj] = []
@@ -491,7 +449,7 @@ class OAElementMD {
       }
     }
 
-    this.minOffset = this._blockOffsets[0] ?? 0
+    this.minOffset = this._blockStartSamples[0] ?? 0
   }
 
   _readMDUpdateInfo (reader) {
@@ -506,8 +464,8 @@ class OAElementMD {
 
     // Number of blocks
     const blockCount = reader.read(3) + 1
-    this._blockOffsets  = new Array(blockCount)
-    this._rampDurations = new Array(blockCount)
+    this._blockStartSamples = new Array(blockCount)
+    this._rampDurations     = new Array(blockCount)
 
     for (let blk = 0; blk < blockCount; blk++) {
       this._readBlockUpdateInfo(reader, blk)
@@ -515,8 +473,12 @@ class OAElementMD {
   }
 
   _readBlockUpdateInfo (reader, blk) {
-    this._blockOffsets[blk]  = reader.read(6) + this._sampleOffset
-    const rampCode           = reader.read(2)
+    // OAMD timing (ETSI TS 103 420, clause 5.3.2):
+    //   start_sample = sample_offset + block_offset_factor * 32
+    const blockOffsetFactor = reader.read(6)
+    this._blockStartSamples[blk] = this._sampleOffset + blockOffsetFactor * 32
+
+    const rampCode = reader.read(2)
     if (rampCode === 3) {
       this._rampDurations[blk] = reader.readBit()
         ? RAMP_DURATION_INDEX[reader.read(4)]
@@ -575,63 +537,9 @@ class ObjectAudioMetadata {
     return true
   }
 
-  /**
-   * Get object positions at the given sample timecode.
-   * Returns the element whose minOffset best brackets timecode.
-   */
-  getObjectsAtTimecode (timecode) {
-    // Find the most-recently-applicable element (like Cavern's UpdateSources)
-    let best = null
-    for (let i = this._elements.length - 1; i >= 0; i--) {
-      const el = this._elements[i]
-      if (el.minOffset < 0) continue
-      if (el.minOffset <= timecode) { best = el; break }
-    }
-    if (!best && this._elements.length > 0) {
-      // fallback: last valid element
-      for (let i = this._elements.length - 1; i >= 0; i--) {
-        if (this._elements[i].minOffset >= 0) { best = this._elements[i]; break }
-      }
-    }
-    return best ? best.getPositions(timecode) : []
-  }
-
-  /**
-   * Collect every unique intra-frame block offset across all valid elements
-   * and return the resolved object positions at each offset.
-   *
-   * KEY FIX: the raw `_blockOffsets[blk]` value is `read(6) + _sampleOffset`.
-   * Subtracting `_sampleOffset` gives the true 0-based audio block index
-   * (0 = first audio block, 1 = second, … up to numBlocks-1).
-   * This index × 256 samples/block gives the sample position within the frame.
-   *
-   * Without this, offsets like [0,1,2,3,4,5] are treated as sample counts
-   * (0,1,2,3,4,5 / 48000 ≈ 0ms each) and all collapse to one cache key.
-   *
-   * @returns {{ timecode: number, blockIndex: number, objects: Array }[]}
-   */
-  getAllBlockKeyframes () {
-    // Collect {rawOffset → sampleOffset} from every valid element.
-    // Two elements may share the same rawOffset; we keep the first sampleOffset
-    // encountered since it reflects the value used by the decoder for that tick.
-    const offsetMap = new Map()   // rawOffset → sampleOffset
-    for (const el of this._elements) {
-      if (el._valid && el.minOffset >= 0) {
-        for (const off of el._blockOffsets) {
-          if (!offsetMap.has(off)) offsetMap.set(off, el._sampleOffset)
-        }
-      }
-    }
-
-    return Array.from(offsetMap.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([tc, sampleOffset]) => ({
-        timecode:   tc,
-        // blockIndex is the 0-based audio-block index WITHIN the EAC3 frame.
-        // rawOffset = blockIndex + sampleOffset  →  blockIndex = rawOffset - sampleOffset.
-        blockIndex: Math.max(0, tc - sampleOffset),
-        objects:    this.getObjectsAtTimecode(tc)
-      }))
+  /** Object elements that carry timing/position data. */
+  getValidElements () {
+    return this._elements.filter(el => el._valid && el.minOffset >= 0)
   }
 
   // ── private ─────────────────────────────────────────────────────────────────
@@ -880,12 +788,15 @@ class ExtensibleMetadataDecoder {
 
 export class EAC3Parser {
   constructor () {
-    this.objects      = []
-    this.sampleRate   = 48000
-    this.channelCount = 0
-    this.isAtmos      = false
+    this.objects       = []
+    this.sampleRate    = 48000
+    this.channelCount  = 0
+    this.isAtmos       = false
     this.totalDuration = 0
-    this._timelineCache = null
+    this._tracks       = null
+    this._trackIds     = []
+    this._eventTimes   = []
+    this._exactCache   = null
   }
 
   /**
@@ -895,14 +806,28 @@ export class EAC3Parser {
    * @returns {{ sampleRate, channelCount, isAtmos, duration, objects }}
    */
   parse (buffer) {
-    const data        = new DataView(buffer)
-    const bytes       = new Uint8Array(buffer)
-    const length      = buffer.byteLength
-    let   offset      = 0
-    let   frameIndex  = 0
-    let   sampleTime  = 0   // in samples
-    this.objects      = []
-    this._timelineCache = null
+    const data   = new DataView(buffer)
+    const bytes  = new Uint8Array(buffer)
+    const length = buffer.byteLength
+    let   offset = 0
+
+    // Audio-frame clock. An E-AC-3 access unit may contain one independent
+    // syncframe followed by dependent substream syncframes. Only the primary
+    // independent substream advances the timeline; dependent frames share its
+    // start time. Counting every syncframe would multiply the duration.
+    let sampleTime   = 0
+    let groupSamples = 0
+    let groupOpen    = false
+    let sampleRateSeen = false
+    let primarySeen  = false
+
+    const objectStates = new Map()
+
+    this.objects     = []
+    this._tracks     = null
+    this._trackIds   = []
+    this._eventTimes = []
+    this._exactCache = null
 
     const emdfDecoder = new ExtensibleMetadataDecoder()
 
@@ -921,9 +846,10 @@ export class EAC3Parser {
       const b3   = bytes[offset + 3]
       const b4   = bytes[offset + 4]
 
-      const strmtyp    = (b2 >> 6) & 0x03
-      const frmsizCode = ((b2 & 0x07) << 8) | b3
-      const frameSize  = (frmsizCode + 1) * 2   // in bytes
+      const strmtyp     = (b2 >> 6) & 0x03
+      const substreamid = (b2 >> 3) & 0x07
+      const frmsizCode  = ((b2 & 0x07) << 8) | b3
+      const frameSize   = (frmsizCode + 1) * 2   // in bytes
 
       if (frameSize < 8 || offset + frameSize > length) {
         offset += 2
@@ -936,13 +862,27 @@ export class EAC3Parser {
       const numBlocks  = BLOCKS_PER_FRAME[numblkscod] ?? 6
       const frameSamples = numBlocks * 256
 
-      if (frameIndex === 0) {
-        this.sampleRate   = sampleRate
-        this.channelCount = _getChannelCount(b4)
+      const isPrimary = strmtyp === 0 && substreamid === 0
+      if (!sampleRateSeen) {
+        this.sampleRate = sampleRate
+        sampleRateSeen  = true
       }
 
-      // ── Scan ALL frame types for EMDF
-      // Real Atmos: strmtyp==1 (dependent) is primary. We also check 0 / 2.
+      if (isPrimary) {
+        if (groupOpen) sampleTime += groupSamples
+        groupOpen    = true
+        groupSamples = frameSamples
+
+        if (!primarySeen) {
+          this.sampleRate   = sampleRate
+          this.channelCount = _getChannelCount(b4)
+          primarySeen       = true
+        }
+      }
+
+      // ── Scan every substream frame for EMDF. OAMD can be carried in the
+      // dependent substream of a 7.1 program, but its timing is still relative
+      // to the current audio-frame group.
       // Wrapped in try-catch: a malformed frame must not kill the entire parse.
       try {
         const frameBytes = new Uint8Array(buffer, offset, frameSize)
@@ -953,55 +893,25 @@ export class EAC3Parser {
         if (decoded && emdfDecoder.hasObjects) {
           this.isAtmos = true
 
-          // Only frames that actually carried an OAMD payload produce
-          // keyframes. If a frame has JOC but no OAMD, `oamd` still holds the
-          // previous frame's elements — re-emitting them would stamp identical
-          // stale positions at new timestamps and bury real motion in
-          // duplicate keyframes. Holding the last keyframe is already the
-          // lookup behaviour of getObjectsAtTime().
           if (emdfDecoder.oamdDecoded) {
-            // Emit a keyframe for EVERY intra-frame block offset present in the
-            // OAMD payload, not just block 0. A single 32 ms EAC3 frame can
-            // encode up to 8 independent sub-block position updates.
-            //
-            // CRITICAL: blockIndex is the TRUE 0-based audio block index within
-            // the frame. Multiply by EAC3_SAMPLES_PER_BLOCK (256) to get the
-            // sample-accurate intra-frame offset, then add sampleTime (frame
-            // start in samples) before dividing by sampleRate.
-            //
-            // Previously `timecode` (raw bitfield value ≈ 0–5) was used directly,
-            // making all sub-frame timestamps round to the same millisecond.
-            const EAC3_SAMPLES_PER_BLOCK = 256   // fixed by the EAC3 standard
-            const keyframes = emdfDecoder.oamd.getAllBlockKeyframes()
-            for (const { timecode, blockIndex, objects: objs } of keyframes) {
-              const timestamp = (sampleTime + blockIndex * EAC3_SAMPLES_PER_BLOCK) / sampleRate
-              for (const obj of objs) {
-                if (obj.valid && !obj.isBed) {
-                  this.objects.push({
-                    id:         obj.id,
-                    timestamp,
-                    x:          obj.x,
-                    y:          obj.y,
-                    z:          obj.z,
-                    size:       obj.size,
-                    gain:       obj.gain,
-                    confidence: 'joc-native'
-                  })
-                }
-              }
-            }
+            this._collectObjectUpdates(
+              emdfDecoder.oamd,
+              sampleTime,
+              this.sampleRate,
+              objectStates
+            )
           }
         }
       } catch (frameErr) {
         // Skip malformed frames silently — continue parsing the next one
       }
 
-      sampleTime  += frameSamples
-      offset      += frameSize
-      frameIndex++
+      offset += frameSize
     }
 
-    this.totalDuration = sampleTime / this.sampleRate
+    this.totalDuration = sampleRateSeen
+      ? (groupOpen ? sampleTime + groupSamples : sampleTime) / this.sampleRate
+      : 0
     this._dropOriginParkedObjects()
 
     return {
@@ -1011,6 +921,122 @@ export class EAC3Parser {
       duration:     this.totalDuration,
       objectCount:  emdfDecoder.oamd.objectCount,
       objects:      this.objects
+    }
+  }
+
+  /**
+   * Turn the OAMD blocks of one frame into per-object state-change events.
+   *
+   * OAMD omits properties that should be reused (`-1`) and only sends a
+   * position for some blocks. State therefore has to survive across blocks and
+   * frames: position (including differential deltas), gain, size, and
+   * active/inactive status.
+   *
+   * @param {ObjectAudioMetadata} oamd
+   * @param {number} frameStartSample  start of the current audio frame
+   * @param {number} sampleRate
+   * @param {Map<number, object>} objectStates
+   */
+  _collectObjectUpdates (oamd, frameStartSample, sampleRate, objectStates) {
+    const elements = oamd.getValidElements()
+    if (elements.length === 0) return
+
+    const updates = []
+    for (const el of elements) {
+      for (let blk = 0; blk < el._blockStartSamples.length; blk++) {
+        updates.push({ el, blk, startSample: el._blockStartSamples[blk] })
+      }
+    }
+    updates.sort((a, b) => a.startSample - b.startSample)
+
+    for (const { el, blk, startSample } of updates) {
+      const timestamp = (frameStartSample + startSample) / sampleRate
+
+      for (let obj = 0; obj < oamd.objectCount; obj++) {
+        const block = el._infoBlocks[obj]?.[blk]
+        if (!block || block.anchor === OBJ_ANCHOR_SPEAKER) continue
+
+        let state = objectStates.get(obj)
+        if (!state) {
+          state = {
+            active: false,
+            hasPosition: false,
+            x: 0.5,
+            y: 0.5,
+            z: 0,
+            gain: 1.0,
+            size: 0.1
+          }
+          objectStates.set(obj, state)
+        }
+
+        if (block.inactive) {
+          if (state.active) {
+            if (state.hasPosition) {
+              this.objects.push({
+                id: obj,
+                timestamp,
+                x: state.x,
+                y: state.y,
+                z: state.z,
+                size: state.size,
+                gain: state.gain,
+                active: false,
+                confidence: 'joc-native'
+              })
+            }
+            state.active = false
+          }
+          continue
+        }
+
+        const wasActive  = state.active
+        const hadPosition = state.hasPosition
+        state.active = true
+
+        let changed = !wasActive
+
+        if (block.validPosition) {
+          const pos = block.resolvePosition(state.x, state.y, state.z)
+          if (pos.valid) {
+            if (pos.x !== state.x || pos.y !== state.y || pos.z !== state.z) {
+              changed = true
+            }
+            state.x = pos.x
+            state.y = pos.y
+            state.z = pos.z
+            state.hasPosition = true
+            if (!hadPosition) changed = true
+          }
+        }
+
+        if (block.gain >= 0 && block.gain !== state.gain) {
+          state.gain = block.gain
+          changed = true
+        }
+
+        if (block.size >= 0) {
+          const size = Math.max(0.05, block.size)
+          if (size !== state.size) {
+            state.size = size
+            changed = true
+          }
+        }
+
+        if (changed && state.hasPosition) {
+          this.objects.push({
+            id: obj,
+            timestamp,
+            x: state.x,
+            y: state.y,
+            z: state.z,
+            size: state.size,
+            gain: state.gain,
+            active: true,
+            confidence: 'joc-native'
+          })
+        }
+      }
     }
   }
 
@@ -1035,6 +1061,7 @@ export class EAC3Parser {
     const atOrigin = new Set()
     const moved = new Set()
     for (const o of this.objects) {
+      if (o.active === false) continue
       if (o.x === 0 && o.y === 0 && o.z === 0) atOrigin.add(o.id)
       else moved.add(o.id)
     }
@@ -1050,46 +1077,122 @@ export class EAC3Parser {
   }
 
   /**
-   * Return the exact set of objects encoded for the current playback time.
+   * Return object state at a playback time.
    *
-   * Uses a sorted-index binary search to find the last keyframe at or before
-   * `time` — no window, no lookahead, no future-event bleeding. When the same
-   * keyframe is active across multiple consecutive rAF calls the method returns
-   * the identical cached array reference, which lets App.jsx skip React state
-   * updates via a cheap identity comparison (objs !== lastRef).
-   *
-   * Zero heap allocations on the hot path after the index is built.
-   *
-   * @param {number} time  playback time in seconds
-   * @returns {Array}      the cached object array for the current keyframe
+   * @param {number}  time    playback time in seconds
+   * @param {boolean} smooth  true = linearly interpolate between metadata
+   *                          events; false = exact metadata snapshots (hold
+   *                          the latest event at or before `time`)
+   * @returns {Array<{ id, x, y, z, gain, size, confidence }>}
    */
-  getObjectsAtTime (time) {
+  getObjectsAtTime (time, smooth = true) {
     if (this.objects.length === 0) return []
+    if (!this._tracks) this._buildTimeline()
+    return smooth ? this._getSmooth(time) : this._getExact(time)
+  }
 
-    // Build both lookup structures once on first call
-    if (!this._timelineCache) {
-      this._timelineCache = new Map()
-      for (const obj of this.objects) {
-        const tMs = Math.round(obj.timestamp * 1000)
-        if (!this._timelineCache.has(tMs)) this._timelineCache.set(tMs, [])
-        this._timelineCache.get(tMs).push(obj)
+  _buildTimeline () {
+    this._tracks = new Map()
+    const times = new Set()
+
+    for (const ev of this.objects) {
+      let track = this._tracks.get(ev.id)
+      if (!track) {
+        track = []
+        this._tracks.set(ev.id, track)
       }
-      // Sorted integer-millisecond key array for binary search
-      this._sortedMs = Array.from(this._timelineCache.keys()).sort((a, b) => a - b)
+      track.push(ev)
+      times.add(ev.timestamp)
     }
 
-    const timeMs = Math.round(time * 1000)
-
-    // Binary search: find the largest key ≤ timeMs (most recent keyframe)
-    let lo = 0, hi = this._sortedMs.length - 1, idx = -1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (this._sortedMs[mid] <= timeMs) { idx = mid; lo = mid + 1 }
-      else hi = mid - 1
+    for (const track of this._tracks.values()) {
+      track.sort((a, b) => a.timestamp - b.timestamp)
     }
 
-    // Return the cached array directly — same reference while keyframe is active
-    return idx === -1 ? [] : (this._timelineCache.get(this._sortedMs[idx]) ?? [])
+    this._trackIds   = Array.from(this._tracks.keys())
+    this._eventTimes = Array.from(times).sort((a, b) => a - b)
+    this._exactCache = new Array(this._eventTimes.length)
+  }
+
+  _getExact (time) {
+    const idx = upperBoundTimes(this._eventTimes, time) - 1
+    if (idx < 0) return []
+
+    const cached = this._exactCache[idx]
+    if (cached) return cached
+
+    const stateTime = this._eventTimes[idx]
+    const result = []
+
+    for (const id of this._trackIds) {
+      const track = this._tracks.get(id)
+      const j = upperBoundEvents(track, stateTime) - 1
+      if (j < 0) continue
+
+      const ev = track[j]
+      if (ev.active === false || ev.gain <= 0.001) continue
+
+      result.push({
+        id,
+        x: ev.x,
+        y: ev.y,
+        z: ev.z,
+        gain: ev.gain,
+        size: ev.size,
+        confidence: ev.confidence
+      })
+    }
+
+    // Same array reference until the next event across any object, so the
+    // renderer can skip redundant state updates via identity comparison.
+    this._exactCache[idx] = result
+    return result
+  }
+
+  _getSmooth (time) {
+    const result = []
+
+    for (const id of this._trackIds) {
+      const track = this._tracks.get(id)
+      const j = upperBoundEvents(track, time) - 1
+      if (j < 0) continue
+
+      const current = track[j]
+      if (current.active === false || current.gain <= 0.001) continue
+
+      let x    = current.x
+      let y    = current.y
+      let z    = current.z
+      let gain = current.gain
+      let size = current.size
+
+      const next = track[j + 1]
+      // Don't interpolate across an inactive/silent gap: hold the last state
+      // until the object actually comes back.
+      if (next && next.active !== false && next.gain > 0.001) {
+        const dt = next.timestamp - current.timestamp
+        if (dt > 0) {
+          const t = Math.max(0, Math.min(1, (time - current.timestamp) / dt))
+          x    += (next.x - x) * t
+          y    += (next.y - y) * t
+          z    += (next.z - z) * t
+          gain += (next.gain - gain) * t
+          size += (next.size - size) * t
+        }
+      }
+
+      result.push({
+        id,
+        x,
+        y,
+        z,
+        gain,
+        size,
+        confidence: current.confidence
+      })
+    }
+
+    return result
   }
 }
 
@@ -1102,6 +1205,28 @@ function clamp01 (v) { return Math.max(0, Math.min(1, v)) }
 
 /** Convert dB to linear gain. */
 function dbToGain (db) { return Math.pow(10, db / 20) }
+
+/** Index of the first timestamp strictly greater than `time`. */
+function upperBoundTimes (times, time) {
+  let lo = 0, hi = times.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (times[mid] <= time) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** Index of the first event strictly after `time`. */
+function upperBoundEvents (events, time) {
+  let lo = 0, hi = events.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (events[mid].timestamp <= time) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
 
 /**
  * Cavern's ExtensibleMetadataExtensions.VariableBits(extractor, 4, 4)

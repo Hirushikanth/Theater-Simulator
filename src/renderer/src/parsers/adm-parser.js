@@ -413,10 +413,13 @@ export class ADMParser {
   }
 
   /**
-   * Get interpolated object positions at a given time.
-   * Uses binary search for efficient lookup.
+   * Get object positions at a given time.
+   *
+   * @param {number} time - Playback time in seconds
+   * @param {boolean} smooth - true = interpolate between events;
+   *                           false = hold the exact latest event
    */
-  getObjectsAtTime(time) {
+  getObjectsAtTime(time, smooth = true) {
     const result = []
 
     for (const obj of this.objects) {
@@ -425,27 +428,64 @@ export class ADMParser {
       const positions = obj.positions
       let lo = 0, hi = positions.length - 1
 
+      if (!smooth) {
+        // Exact metadata snapshots: hold the latest event at or before `time`.
+        // Before the first event, keep the existing ADM behaviour of showing
+        // the first position.
+        if (time >= positions[hi].time) {
+          const p = positions[hi]
+          if (p.gain > 0.001) {
+            result.push({
+              id: obj.id, name: obj.name,
+              x: p.x, y: p.y, z: p.z,
+              size: p.size, gain: p.gain,
+              confidence: 'adm'
+            })
+          }
+          continue
+        }
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1
+          if (positions[mid].time <= time) lo = mid
+          else hi = mid - 1
+        }
+        const p = positions[lo]
+        if (p.gain > 0.001) {
+          result.push({
+            id: obj.id, name: obj.name,
+            x: p.x, y: p.y, z: p.z,
+            size: p.size, gain: p.gain,
+            confidence: 'adm'
+          })
+        }
+        continue
+      }
+
       // Before first keyframe
       if (time <= positions[0].time) {
         const p = positions[0]
-        result.push({
-          id: obj.id, name: obj.name,
-          x: p.x, y: p.y, z: p.z,
-          size: p.size, gain: p.gain,
-          confidence: 'adm'
-        })
+        if (p.gain > 0.001) {
+          result.push({
+            id: obj.id, name: obj.name,
+            x: p.x, y: p.y, z: p.z,
+            size: p.size, gain: p.gain,
+            confidence: 'adm'
+          })
+        }
         continue
       }
 
       // After last keyframe
       if (time >= positions[hi].time) {
         const p = positions[hi]
-        result.push({
-          id: obj.id, name: obj.name,
-          x: p.x, y: p.y, z: p.z,
-          size: p.size, gain: p.gain,
-          confidence: 'adm'
-        })
+        if (p.gain > 0.001) {
+          result.push({
+            id: obj.id, name: obj.name,
+            x: p.x, y: p.y, z: p.z,
+            size: p.size, gain: p.gain,
+            confidence: 'adm'
+          })
+        }
         continue
       }
 
@@ -458,6 +498,19 @@ export class ADMParser {
 
       const before = positions[lo]
       const after = positions[hi]
+
+      if (before.gain <= 0.001) continue
+
+      // Never interpolate into silence; hold the last audible state.
+      if (after.gain <= 0.001) {
+        result.push({
+          id: obj.id, name: obj.name,
+          x: before.x, y: before.y, z: before.z,
+          size: before.size, gain: before.gain,
+          confidence: 'adm'
+        })
+        continue
+      }
 
       // Interpolate
       const dt = after.time - before.time

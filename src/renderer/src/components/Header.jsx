@@ -1,9 +1,12 @@
 import React from 'react'
+import SettingsMenu from './SettingsMenu'
 
 export default function Header({ 
   onOpenFile, fileName, isLoading, 
   enableSyntheticUpmix, onToggleSynthetic,
-  useProfessionalDecoder, onToggleProfessional
+  useProfessionalDecoder, onToggleProfessional,
+  smoothObjectMotion, onToggleSmoothMotion,
+  layoutId, onLayoutChange
 }) {
   return (
     <div className="titlebar">
@@ -16,24 +19,6 @@ export default function Header({
       </div>
 
       <div className="titlebar-actions">
-        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '16px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          <input 
-            type="checkbox" 
-            checked={useProfessionalDecoder} 
-            onChange={onToggleProfessional} 
-            style={{ accentColor: '#ff6b00', cursor: 'pointer' }}
-          />
-          Professional Decoder (truehdd)
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '16px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          <input 
-            type="checkbox" 
-            checked={enableSyntheticUpmix} 
-            onChange={onToggleSynthetic} 
-            style={{ accentColor: 'var(--color-cyan)', cursor: 'pointer' }}
-          />
-          Synthetic Upmix (Fallback)
-        </label>
         {isLoading && (
           <div className="loading-indicator">
             <div className="loading-spinner"></div>
@@ -41,10 +26,20 @@ export default function Header({
           </div>
         )}
         {fileName && !isLoading && (
-          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+          <span className="titlebar-filename" title={fileName}>
             {fileName}
           </span>
         )}
+        <SettingsMenu
+          layoutId={layoutId}
+          onLayoutChange={onLayoutChange}
+          enableSyntheticUpmix={enableSyntheticUpmix}
+          onToggleSynthetic={onToggleSynthetic}
+          useProfessionalDecoder={useProfessionalDecoder}
+          onToggleProfessional={onToggleProfessional}
+          smoothObjectMotion={smoothObjectMotion}
+          onToggleSmoothMotion={onToggleSmoothMotion}
+        />
         <button className="btn btn-primary" onClick={onOpenFile}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>

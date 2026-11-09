@@ -91,7 +91,7 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   // Updated protocol handler using URL searchParams
-  protocol.handle('atmos', (request) => {
+  protocol.handle('atmos', async (request) => {
     try {
       const url = new URL(request.url)
       let filePath = url.searchParams.get('path')
@@ -103,8 +103,19 @@ app.whenReady().then(async () => {
         filePath = filePath.slice(1)
       }
       
-      // Stream the file chunk by chunk to the renderer using net.fetch
-      return net.fetch(pathToFileURL(filePath).toString())
+      // Stream the file chunk by chunk to the renderer using net.fetch.
+      // The media element requests this cross-origin custom scheme through
+      // CORS; without the ACAO header Chromium feeds silence into the
+      // MediaElementSource, which would leave every channel meter at zero.
+      const fileResponse = await net.fetch(pathToFileURL(filePath).toString())
+      const headers = new Headers(fileResponse.headers)
+      headers.set('Access-Control-Allow-Origin', '*')
+
+      return new Response(fileResponse.body, {
+        status: fileResponse.status,
+        statusText: fileResponse.statusText,
+        headers
+      })
     } catch (err) {
       console.error('Protocol error:', err)
       return new Response('Protocol Error', { status: 500 })

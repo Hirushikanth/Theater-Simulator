@@ -9,14 +9,17 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { ROOM, atmosToRoom, objectColor, hexToRgb } from '../utils/constants'
+import { DEFAULT_LAYOUT } from '../utils/layouts'
 import { RoomEnvironment } from './RoomEnvironment'
 import { SpeakerSystem } from './SpeakerSystem'
 
 const MAX_ATMOS_OBJECTS = 128
 
 export class TheaterScene {
-  constructor(container) {
+  constructor(container, layout = DEFAULT_LAYOUT) {
     this.container = container
+    this.layout = layout
+    this.layoutId = layout.id
     this.width = container.clientWidth
     this.height = container.clientHeight
 
@@ -84,7 +87,7 @@ export class TheaterScene {
     this.room = new RoomEnvironment()
     this.scene.add(this.room.group)
 
-    this.speakers = new SpeakerSystem()
+    this.speakers = new SpeakerSystem(this.layout.speakers)
     this.scene.add(this.speakers.group)
 
     // Pre-allocate the dynamic object pool
@@ -158,10 +161,10 @@ export class TheaterScene {
       mesh.material.emissive.setRGB(rgb.r * 0.5, rgb.g * 0.5, rgb.b * 0.5)
 
       // Snap opacity directly to the metadata-driven value — no lerp,
-      // no artificial smoothing. The visualiser shows exactly what the
-      // encoder wrote, frame by frame.
-      const targetOpacity = 0.4 + (obj.gain || 0.8) * 0.6
-      mesh.material.opacity = targetOpacity
+      // no artificial smoothing. A zero gain means the object is silent
+      // (offline), not that the gain field is missing.
+      const gain = Number.isFinite(obj.gain) ? Math.max(0, obj.gain) : 0.8
+      mesh.material.opacity = gain > 0.001 ? Math.min(1, 0.4 + gain * 0.6) : 0
 
       // Size scaling
       const scale = 0.08 + (obj.size || 0.05) * 0.3
@@ -178,6 +181,25 @@ export class TheaterScene {
         this.objectPool.push(mesh)
       }
     }
+  }
+
+  setLayout(layout) {
+    if (!layout || layout.id === this.layoutId) return
+
+    this.layout = layout
+    this.layoutId = layout.id
+
+    if (this.speakers) {
+      this.scene.remove(this.speakers.group)
+      this.speakers.dispose()
+    }
+
+    this.speakers = new SpeakerSystem(layout.speakers)
+    this.scene.add(this.speakers.group)
+
+    // App recalculates gains for the new layout immediately after this call.
+    this.speakerGains = new Map()
+    this.speakerLevels = new Map()
   }
 
   updateSpeakerGains(gains) {
